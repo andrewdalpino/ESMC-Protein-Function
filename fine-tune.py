@@ -198,6 +198,8 @@ def main():
         total_batches, total_steps = 0, 0
         step = 0
 
+        progress = tqdm(total=args.max_steps_per_epoch, desc=f"Epoch {epoch}", leave=False)
+
         while step < args.max_steps_per_epoch:
             aspect, dataloader = random.choice(train_loaders)
 
@@ -235,6 +237,8 @@ def main():
 
                 total_gradient_norm += norm.item()
                 total_steps += 1
+
+            progress.update(1)
 
             step += 1
 

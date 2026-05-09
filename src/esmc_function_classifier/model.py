@@ -333,7 +333,7 @@ class MultiLabelClassifier(Module):
         assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
         assert num_classes > 0, "num_classes must be greater than 0."
 
-        self.linear1 = Linear(embedding_dimensions, embedding_dimensions)
+        self.linear1 = Linear(embedding_dimensions, 2 * embedding_dimensions)
         self.linear2 = Linear(embedding_dimensions, num_classes)
 
         self.swiglu = SwiGLU()
