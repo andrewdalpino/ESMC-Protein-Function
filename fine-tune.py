@@ -2,6 +2,7 @@ import random
 
 from argparse import ArgumentParser
 from functools import partial
+from itertools import cycle
 
 import torch
 
@@ -51,7 +52,7 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--max_steps_per_epoch", default=1024, type=int)
+    parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -198,44 +199,41 @@ def main():
 
     model.train()
 
-    print("Fine-tuning ...")
-
     train_loaders = [
-        ("mf", iter(mf_train_loader)),
-        ("bp", iter(bp_train_loader)),
-        ("cc", iter(cc_train_loader)),
+        (model.forward_mf, cycle(mf_train_loader)),
+        (model.forward_bp, cycle(bp_train_loader)),
+        (model.forward_cc, cycle(cc_train_loader)),
     ]
 
     test_loaders = [
-        ("mf", iter(mf_test_loader)),
-        ("bp", iter(bp_test_loader)),
-        ("cc", iter(cc_test_loader)),
+        ("MF", model.forward_mf, mf_test_loader),
+        ("BP", model.forward_bp, bp_test_loader),
+        ("CC", model.forward_cc, cc_test_loader),
     ]
+
+    new_progress_bar = partial(
+        tqdm,
+        total=args.max_steps_per_epoch,
+        leave=False,
+    )
+
+    print("Fine-tuning ...")
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_cross_entropy, total_gradient_norm = 0.0, 0.0
-        total_batches, total_steps = 0, 0
-        step = 0
+        step, total_batches, total_steps = 0, 0, 0
 
-        progress = tqdm(
-            total=args.max_steps_per_epoch, desc=f"Epoch {epoch}", leave=False
-        )
+        progress = new_progress_bar(desc=f"Epoch {epoch}")
+
+        optimizer.zero_grad()
 
         while step < args.max_steps_per_epoch:
-            aspect, dataloader = random.choice(train_loaders)
+            forward_path, dataloader = random.choice(train_loaders)
 
             x, y = next(dataloader)
 
             x = x.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
-
-            match aspect:
-                case "mf":
-                    forward_path = model.forward_mf
-                case "bp":
-                    forward_path = model.forward_bp
-                case "cc":
-                    forward_path = model.forward_cc
 
             with amp_context:
                 y_pred = forward_path(x)
@@ -254,7 +252,7 @@ def main():
 
                 optimizer.step()
 
-                optimizer.zero_grad(set_to_none=True)
+                optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
                 total_steps += 1
@@ -262,6 +260,8 @@ def main():
             progress.update(1)
 
             step += 1
+
+        progress.close()
 
         average_cross_entropy = total_cross_entropy / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
@@ -278,20 +278,12 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for aspect, dataloader in test_loaders:
-                match aspect:
-                    case "mf":
-                        forward_path = model.forward_mf
-                    case "bp":
-                        forward_path = model.forward_bp
-                    case "cc":
-                        forward_path = model.forward_cc
-
+            for aspect, forward_path, dataloader in test_loaders:
                 for x, y in tqdm(dataloader, desc=f"Testing {aspect}", leave=False):
                     x = x.to(args.device, non_blocking=True)
                     y = y.to(args.device, non_blocking=True)
 
-                    with torch.no_grad(), amp_context:
+                    with torch.no_grad():
                         y_pred = forward_path(x)
 
                         y_prob = torch.sigmoid(y_pred)
@@ -299,21 +291,21 @@ def main():
                     precision_metric.update(y_prob, y)
                     recall_metric.update(y_prob, y)
 
-            precision = precision_metric.compute()
-            recall = recall_metric.compute()
+                precision = precision_metric.compute()
+                recall = recall_metric.compute()
 
-            f1_score = (2 * precision * recall) / (precision + recall)
+                f1_score = (2 * precision * recall) / (precision + recall)
 
-            logger.add_scalar("F1 Score", f1_score, epoch)
-            logger.add_scalar("Precision", precision, epoch)
-            logger.add_scalar("Recall", recall, epoch)
+                logger.add_scalar(f"{aspect} F1 Score", f1_score, epoch)
+                logger.add_scalar(f"{aspect} Precision", precision, epoch)
+                logger.add_scalar(f"{aspect} Recall", recall, epoch)
 
-            print(
-                f"F1: {f1_score:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}"
-            )
+                print(
+                    f"{aspect} F1 Score: {f1_score:.4f}, {aspect} Precision: {precision:.4f}, {aspect} Recall: {recall:.4f}"
+                )
 
-            precision_metric.reset()
-            recall_metric.reset()
+                precision_metric.reset()
+                recall_metric.reset()
 
             model.train()
 

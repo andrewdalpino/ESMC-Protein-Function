@@ -139,7 +139,7 @@ class AmiGO(Dataset):
 
                 labels[label_index] = 1.0
 
-        x = torch.tensor(tokens, dtype=torch.int64)
+        x = torch.tensor(tokens, dtype=torch.int32)
         y = torch.tensor(labels, dtype=torch.float32)
 
         assert x.size(0) <= self.max_sequence_length
