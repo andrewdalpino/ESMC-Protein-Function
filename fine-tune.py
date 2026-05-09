@@ -13,7 +13,7 @@ from torch.backends.mps import is_available as mps_is_available
 from torch.amp import autocast
 from torch.nn.utils import clip_grad_norm_
 
-from torchmetrics.classification import BinaryPrecision, BinaryRecall
+from metrics import F1Score
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -22,7 +22,7 @@ from esm.tokenization import EsmSequenceTokenizer
 import obonet
 
 from src.esmc_function_classifier.model import EsmcGoTermClassifier
-from data import AmiGOBoost
+from data import AmiGOBoost, LengthBucketBatchSampler
 
 from tqdm import tqdm
 
@@ -39,31 +39,29 @@ def main():
         default="esmc_300m",
         choices=AVAILABLE_BASE_MODELS,
     )
-    parser.add_argument(
-        "--dataset_subset", default="all", choices=AmiGOBoost.AVAILABLE_SUBSETS
-    )
     parser.add_argument("--num_dataset_processes", default=1, type=int)
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--min_sequence_length", default=1, type=int)
     parser.add_argument("--max_sequence_length", default=2048, type=int)
-    parser.add_argument("--unfreeze_last_k_layers", default=7, type=int)
+    parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
     parser.add_argument("--quantization_aware_training", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
-    parser.add_argument("--learning_rate", default=5e-4, type=float)
+    parser.add_argument("--learning_rate", default=2e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--num_length_buckets", default=10, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
-    parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--classifier_hidden_ratio", default=1, type=int)
+    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
-    parser.add_argument("--eval_interval", default=2, type=int)
-    parser.add_argument("--checkpoint_interval", default=2, type=int)
+    parser.add_argument("--eval_interval", default=5, type=int)
+    parser.add_argument("--checkpoint_interval", default=5, type=int)
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--run_dir_path", default="./runs", type=str)
-    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--seed", default=None, type=int)
 
     args = parser.parse_args()
@@ -117,40 +115,59 @@ def main():
 
     new_dataset = partial(
         AmiGOBoost,
-        subset=args.dataset_subset,
         graph=graph,
         tokenizer=tokenizer,
         min_sequence_length=args.min_sequence_length,
         max_sequence_length=args.max_sequence_length,
     )
 
-    training = new_dataset(split="train")
-    testing = new_dataset(split="test")
+    mf_train = new_dataset(subset="mf", split="train")
+    bp_train = new_dataset(subset="bp", split="train")
+    cc_train = new_dataset(subset="cc", split="train")
+
+    mf_test = new_dataset(subset="mf", split="test")
+    bp_test = new_dataset(subset="bp", split="test")
+    cc_test = new_dataset(subset="cc", split="test")
+
+    # Make sure test and train sets have the same label indices to GO term mapping.
+    mf_test.go_ids_to_label_indices = mf_train.go_ids_to_label_indices
+    bp_test.go_ids_to_label_indices = bp_train.go_ids_to_label_indices
+    cc_test.go_ids_to_label_indices = cc_train.go_ids_to_label_indices
+
+    mf_test.num_classes = mf_train.num_classes
+    bp_test.num_classes = bp_train.num_classes
+    cc_test.num_classes = cc_train.num_classes
 
     new_dataloader = partial(
         DataLoader,
-        batch_size=args.batch_size,
-        collate_fn=training.collate_pad_right,
+        collate_fn=mf_train.collate_pad_right,
         pin_memory="cuda" in args.device,
         num_workers=args.num_dataset_processes,
     )
 
-    train_loader = new_dataloader(training, shuffle=True)
-    test_loader = new_dataloader(testing)
+    new_sampler = partial(
+        LengthBucketBatchSampler,
+        batch_size=args.batch_size,
+        num_buckets=args.num_length_buckets,
+    )
 
-    print(f"Training samples: {len(training.dataset):,}")
-    print(f"Testing samples: {len(testing.dataset):,}")
+    mf_train_loader = new_dataloader(mf_train, batch_sampler=new_sampler(mf_train))
+    bp_train_loader = new_dataloader(bp_train, batch_sampler=new_sampler(bp_train))
+    cc_train_loader = new_dataloader(cc_train, batch_sampler=new_sampler(cc_train))
+
+    mf_test_loader = new_dataloader(mf_test, batch_size=args.batch_size)
+    bp_test_loader = new_dataloader(bp_test, batch_size=args.batch_size)
+    cc_test_loader = new_dataloader(cc_test, batch_size=args.batch_size)
 
     model_args = {
         "model_name": args.base_model,
-        "classifier_hidden_ratio": args.classifier_hidden_ratio,
-        "id2label": training.label_indices_to_go_ids,
+        "indexToMfGoTerm": mf_train.label_indices_to_go_ids,
+        "indexToBpGoTerm": bp_train.label_indices_to_go_ids,
+        "indexToCcGoTerm": cc_train.label_indices_to_go_ids,
         "use_flash_attention": args.use_flash_attention,
     }
 
     model = EsmcGoTermClassifier.from_esm_pretrained(**model_args)
-
-    print(f"Number of parameters: {model.num_params:,}")
 
     model.freeze_base()
 
@@ -159,6 +176,7 @@ def main():
     if args.quantization_aware_training:
         model.add_fake_quantized_tensors(args.quant_group_size)
 
+    print(f"Number of parameters: {model.num_params:,}")
     print(f"Number of trainable parameters: {model.num_trainable_parameters:,}")
 
     model = model.to(args.device)
@@ -167,8 +185,7 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    precision_metric = BinaryPrecision().to(args.device)
-    recall_metric = BinaryRecall().to(args.device)
+    f1_metric = F1Score().to(args.device)
 
     starting_epoch = 1
 
@@ -186,20 +203,44 @@ def main():
 
     model.train()
 
+    train_loaders = [
+        (model.forward_mf, iter(mf_train_loader)),
+        (model.forward_bp, iter(bp_train_loader)),
+        (model.forward_cc, iter(cc_train_loader)),
+    ]
+
+    test_loaders = [
+        ("MF", model.predict_mf, mf_test_loader),
+        ("BP", model.predict_bp, bp_test_loader),
+        ("CC", model.predict_cc, cc_test_loader),
+    ]
+
+    new_progress_bar = partial(
+        tqdm,
+        total=args.max_steps_per_epoch,
+        leave=False,
+    )
+
     print("Fine-tuning ...")
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_cross_entropy, total_gradient_norm = 0.0, 0.0
-        total_batches, total_steps = 0, 0
+        step, total_batches, total_steps = 1, 0, 0
 
-        for step, (x, y) in enumerate(
-            tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
-        ):
+        progress = new_progress_bar(desc=f"Epoch {epoch}")
+
+        optimizer.zero_grad()
+
+        while step <= args.max_steps_per_epoch:
+            forward_path, dataloader = random.choice(train_loaders)
+
+            x, y = next(dataloader)
+
             x = x.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred = model.forward(x)
+                y_pred = forward_path(x)
 
                 loss = loss_function(y_pred, y)
 
@@ -215,10 +256,16 @@ def main():
 
                 optimizer.step()
 
-                optimizer.zero_grad(set_to_none=True)
+                optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
                 total_steps += 1
+
+            progress.update(1)
+
+            step += 1
+
+        progress.close()
 
         average_cross_entropy = total_cross_entropy / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
@@ -235,33 +282,28 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for x, y in tqdm(test_loader, desc="Testing", leave=False):
-                x = x.to(args.device, non_blocking=True)
-                y = y.to(args.device, non_blocking=True)
+            for aspect, forward_path, dataloader in test_loaders:
+                for x, y in tqdm(dataloader, desc=f"Testing {aspect}", leave=False):
+                    x = x.to(args.device, non_blocking=True)
+                    y = y.to(args.device, non_blocking=True)
 
-                with torch.no_grad(), amp_context:
-                    y_pred = model.forward(x)
+                    y_prob = forward_path(x)
 
-                    y_prob = torch.sigmoid(y_pred)
+                    f1_metric.update(y_prob, y)
 
-                precision_metric.update(y_prob, y)
-                recall_metric.update(y_prob, y)
+                f1_score, precision, recall = f1_metric.compute()
 
-            precision = precision_metric.compute()
-            recall = recall_metric.compute()
+                logger.add_scalar(f"{aspect} F1 Score", f1_score, epoch)
+                logger.add_scalar(f"{aspect} Precision", precision, epoch)
+                logger.add_scalar(f"{aspect} Recall", recall, epoch)
 
-            f1_score = (2 * precision * recall) / (precision + recall)
+                print(
+                    f"{aspect} F1 Score: {f1_score:.4f}, "
+                    f"{aspect} Precision: {precision:.4f}, "
+                    f"{aspect} Recall: {recall:.4f}"
+                )
 
-            logger.add_scalar("F1 Score", f1_score, epoch)
-            logger.add_scalar("Precision", precision, epoch)
-            logger.add_scalar("Recall", recall, epoch)
-
-            print(
-                f"F1: {f1_score:.3f}, Precision: {precision:.3f}, Recall: {recall:.3f}"
-            )
-
-            precision_metric.reset()
-            recall_metric.reset()
+                f1_metric.reset()
 
             model.train()
 

@@ -16,17 +16,15 @@ from torchao.quantization.qat import (
 )
 
 from esm.tokenization import EsmSequenceTokenizer
-from esm.models.esmc import ESMC
+from esm.models.esmc import ESMC, ESMCOutput
 from esm.layers.blocks import SwiGLU
 
 from huggingface_hub import PyTorchModelHubMixin
 
-import networkx as nx
-
-from networkx import DiGraph
+from networkx import DiGraph, is_directed_acyclic_graph, descendants
 
 
-class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
+class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
     """
     A model for predicting Gene Ontology (GO) terms from protein sequences using the
     ESMC base model.
@@ -50,28 +48,14 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         "esmc_600m": "data/weights/esmc_600m_2024_12_v0.pth",
     }
 
-    AVAILABLE_CLASSIFIER_HIDDEN_RATIOS = {1, 2, 4}
-
-    @classmethod
-    def from_pretrained(cls, *args, **kwargs) -> "EsmcGoTermClassifier":
-        """
-        The base model code is not compatible with HuggingFace Hub because the ESMC folks
-        store the tokenizer within the model class, which is not a JSON serializable
-        configuration. In addition, the base code implements a custom `from_pretrained`
-        method but it does not follow the HuggingFace Hub conventions. Therefore, let's
-        compensate by redirecting the call to `from_pretrained` to the HuggingFace Hub
-        mixin and ensure that we load the tokenizer in the constructor.
-        """
-
-        return super(PyTorchModelHubMixin, cls).from_pretrained(*args, **kwargs)
-
     @classmethod
     def from_esm_pretrained(
         cls,
         model_name: str,
-        classifier_hidden_ratio: int,
-        id2label: dict[int, str],
-        use_flash_attention: bool = True,
+        indexToMfGoTerm: dict[int, str],
+        indexToBpGoTerm: dict[int, str],
+        indexToCcGoTerm: dict[int, str],
+        use_flash_attention: bool,
     ) -> "EsmcGoTermClassifier":
         """
         Since the base model pretrained weights are stored in a proprietary pickle format,
@@ -86,9 +70,12 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         model_args = cls.ESM_PRETRAINED_CONFIGS.get(model_name)
 
         model = cls(
-            **model_args,
-            classifier_hidden_ratio=classifier_hidden_ratio,
-            id2label=id2label,
+            embedding_dimensions=model_args["embedding_dimensions"],
+            num_heads=model_args["num_heads"],
+            num_encoder_layers=model_args["num_encoder_layers"],
+            indexToMfGoTerm=indexToMfGoTerm,
+            indexToBpGoTerm=indexToBpGoTerm,
+            indexToCcGoTerm=indexToCcGoTerm,
             use_flash_attention=use_flash_attention,
         )
 
@@ -101,7 +88,7 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
 
         state_dict = torch.load(checkpoint_path)
 
-        model.load_state_dict(state_dict, strict=False)
+        model.encoder.load_state_dict(state_dict, strict=False)
 
         return model
 
@@ -110,23 +97,17 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         embedding_dimensions: int,
         num_heads: int,
         num_encoder_layers: int,
-        classifier_hidden_ratio: int,
-        id2label: dict[int, str],
-        use_flash_attention: bool = True,
+        indexToMfGoTerm: dict[int, str],
+        indexToBpGoTerm: dict[int, str],
+        indexToCcGoTerm: dict[int, str],
+        use_flash_attention: bool,
     ) -> None:
-        if classifier_hidden_ratio not in self.AVAILABLE_CLASSIFIER_HIDDEN_RATIOS:
-            raise ValueError(
-                f"Invalid classifier_hidden_ratio: {classifier_hidden_ratio}. "
-                "Must be one of (1, 2, 4)."
-            )
-
-        if len(id2label) < 1:
-            raise ValueError("id2label must contain at least one label.")
+        super().__init__()
 
         # This is required for the base class but is not used otherwise.
         tokenizer = EsmSequenceTokenizer()
 
-        super().__init__(
+        encoder = ESMC(
             d_model=embedding_dimensions,
             n_heads=num_heads,
             n_layers=num_encoder_layers,
@@ -134,24 +115,30 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
             use_flash_attn=use_flash_attention,
         )
 
-        # Remove pretrained sequence head from the base model.
-        self.sequence_head = Identity()
+        # Remove pretrained sequence head from the encoder.
+        encoder.sequence_head = Identity()
 
-        num_classes = len(id2label)
+        num_mf_classes = len(indexToMfGoTerm)
+        num_bp_classes = len(indexToBpGoTerm)
+        num_cc_classes = len(indexToCcGoTerm)
 
-        self.classifier = MLPClassifier(
-            embedding_dimensions, classifier_hidden_ratio, num_classes
-        )
+        self.encoder = encoder
 
-        id2label = {int(index): str(label) for index, label in id2label.items()}
+        self.mf_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_mf_classes)
+        self.bp_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_bp_classes)
+        self.cc_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_cc_classes)
 
-        self.embedding_dimensions = embedding_dimensions
-        self.id2label = id2label
+        self.indexToMfGoTerm = indexToMfGoTerm
+        self.indexToBpGoTerm = indexToBpGoTerm
+        self.indexToCcGoTerm = indexToCcGoTerm
+
+        self.embedding_dimensions = encoder.embed.embedding_dim
+
         self.graph: DiGraph | None = None
 
     @property
     def num_encoder_layers(self) -> int:
-        return len(self.transformer.blocks)
+        return len(self.encoder.blocks)
 
     @property
     def num_params(self) -> int:
@@ -161,28 +148,19 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
     def num_trainable_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-    @property
-    def label2id(self) -> dict[str, int]:
-        return {label: index for index, label in self.id2label.items()}
-
-    @property
-    def num_classes(self) -> int:
-        return len(self.id2label)
-
     def freeze_base(self) -> None:
         """Prevent the base model parameters from being updated during training."""
 
-        for module in (self.embed, self.transformer):
+        for module in self.encoder.modules():
             for param in module.parameters():
                 param.requires_grad = False
 
     def unfreeze_last_k_encoder_layers(self, k: int) -> None:
         """Allow the last k encoder layers to be trainable."""
 
-        if k <= 0:
-            return
+        assert k > 0, "k must be greater than 0."
 
-        for module in self.transformer.blocks[-k:]:
+        for module in self.encoder.transformer.blocks[-k:]:
             for param in module.parameters():
                 param.requires_grad = True
 
@@ -216,16 +194,16 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
     def load_gene_ontology(self, graph: DiGraph) -> None:
         """Load the Gene Ontology (GO) DAG."""
 
-        assert nx.is_directed_acyclic_graph(
+        assert is_directed_acyclic_graph(
             graph
         ), "Invalid GO graph, must be a directed acyclic graph (DAG)."
 
         self.graph = graph
 
-    def forward(
+    def forward_mf(
         self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
     ) -> Tensor:
-        out = super().forward(
+        out: ESMCOutput = self.encoder.forward(
             sequence_tokens=sequence_tokens,
             sequence_id=sequence_id,
         )
@@ -233,74 +211,173 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         # Grab the classification token <CLS> embeddings.
         x = out.embeddings[:, 0, :]
 
-        z = self.classifier.forward(x)
+        z = self.mf_head.forward(x)
 
         return z
 
+    def forward_bp(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z = self.bp_head.forward(x)
+
+        return z
+
+    def forward_cc(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z = self.cc_head.forward(x)
+
+        return z
+
+    def forward_all(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z_mf = self.mf_head.forward(x)
+        z_bp = self.bp_head.forward(x)
+        z_cc = self.cc_head.forward(x)
+
+        return z_mf, z_bp, z_cc
+
     @torch.inference_mode()
-    def predict_terms(
+    def predict_mf(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts MF GO terms based on the input sequence tokens."""
+
+        z = self.forward_mf(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_bp(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts BP GO terms based on the input sequence tokens."""
+
+        z = self.forward_bp(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_cc(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts CC GO terms based on the input sequence tokens."""
+
+        z = self.forward_cc(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_all(self, sequence_tokens: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Predicts MF, BP, and CC GO terms based on the input sequence tokens."""
+
+        z_mf, z_bp, z_cc = self.forward_all(sequence_tokens)
+
+        mf_prob = torch.sigmoid(z_mf)
+        bp_prob = torch.sigmoid(z_bp)
+        cc_prob = torch.sigmoid(z_cc)
+
+        return mf_prob, bp_prob, cc_prob
+
+    @torch.inference_mode()
+    def predict_all_terms(
         self, sequence_tokens: Tensor, top_p: float = 0.5
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], ...]:
         """Predicts GO terms based on the input sequence tokens."""
 
-        assert sequence_tokens.ndim == 1, "sequence must be a 1D tensor."
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z = self.forward(sequence_tokens.unsqueeze(0)).squeeze(0)
+        mf_prob, bp_prob, cc_prob = self.predict_all(sequence_tokens)
 
-        probabilities = torch.sigmoid(z).tolist()
+        aspects = [
+            (self.indexToMfGoTerm, mf_prob),
+            (self.indexToBpGoTerm, bp_prob),
+            (self.indexToCcGoTerm, cc_prob),
+        ]
 
-        probabilities = {
-            self.id2label[index]: probability
-            for index, probability in enumerate(copy(probabilities))
-            if probability > top_p
-        }
+        for mapping, probabilities in aspects:
+            probabilities = {
+                mapping[index]: probability
+                for index, probability in enumerate(copy(probabilities))
+                if probability > top_p
+            }
 
-        return probabilities
+        return mf_prob, bp_prob, cc_prob
 
     @torch.inference_mode()
-    def predict_subgraph(
+    def predict_all_subgraph(
         self, sequence_tokens: Tensor, top_p: float = 0.5
-    ) -> tuple[DiGraph, dict[str, float]]:
+    ) -> tuple[DiGraph, ...]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        probabilities = self.predict_terms(sequence_tokens, top_p)
+        mf_prob, bp_prob, cc_prob = self.predict_all_terms(sequence_tokens, top_p)
 
-        child_nodes = copy(probabilities)
+        mf_subgraph, bp_subgraph, cc_subgraph = None, None, None
 
-        probabilities = defaultdict(float, probabilities)
+        aspects = [
+            (mf_prob, mf_subgraph),
+            (bp_prob, bp_subgraph),
+            (cc_prob, cc_subgraph),
+        ]
 
-        # Fix up the predictions by leveraging the GO DAG hierarchy.
-        for go_id, child_probability in child_nodes.items():
-            for descendant in nx.descendants(self.graph, go_id):
-                parent_probability = probabilities[descendant]
+        for probabilities, subgraph in aspects:
+            child_nodes = copy(probabilities)
 
-                probabilities[descendant] = max(
-                    parent_probability,
-                    child_probability,
-                )
+            probabilities = defaultdict(float, probabilities)
 
-        subgraph = self.graph.subgraph(probabilities.keys())
+            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            for go_id, child_probability in child_nodes.items():
+                for descendant in descendants(self.graph, go_id):
+                    parent_probability = probabilities[descendant]
 
-        return subgraph, probabilities
+                    probabilities[descendant] = max(
+                        parent_probability,
+                        child_probability,
+                    )
+
+            subgraph = self.graph.subgraph(probabilities.keys())
+
+        return mf_subgraph, bp_subgraph, cc_subgraph
 
 
-class MLPClassifier(Module):
-    """A 2-layer classification head with SwiGLU activation."""
+class MultiLabelClassifier(Module):
+    """A 2-layer multi-label binary classification head with SwiGLU activation."""
 
-    def __init__(self, embedding_dimensions: int, hidden_ratio: int, num_classes: int):
+    def __init__(self, embedding_dimensions: int, num_classes: int):
         super().__init__()
 
         assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
-        assert hidden_ratio in {1, 2, 4}, "hidden_ratio must be one of (1, 2, 4)."
         assert num_classes > 0, "num_classes must be greater than 0."
 
-        hidden_dimensions = hidden_ratio * embedding_dimensions
-
-        self.linear1 = Linear(embedding_dimensions, 2 * hidden_dimensions)
-        self.linear2 = Linear(hidden_dimensions, num_classes)
+        self.linear1 = Linear(embedding_dimensions, 2 * embedding_dimensions)
+        self.linear2 = Linear(embedding_dimensions, num_classes)
 
         self.swiglu = SwiGLU()
 
