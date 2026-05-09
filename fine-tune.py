@@ -7,7 +7,7 @@ import torch
 
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
 from torch.amp import autocast
@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--min_sequence_length", default=1, type=int)
     parser.add_argument("--max_sequence_length", default=2048, type=int)
-    parser.add_argument("--unfreeze_last_k_layers", default=7, type=int)
+    parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
     parser.add_argument("--quantization_aware_training", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
     parser.add_argument("--learning_rate", default=5e-4, type=float)
@@ -124,7 +124,18 @@ def main():
     bp_train = new_dataset(subset="bp", split="train")
     cc_train = new_dataset(subset="cc", split="train")
 
-    testing = new_dataset(subset="all", split="test")
+    mf_test = new_dataset(subset="mf", split="test")
+    bp_test = new_dataset(subset="bp", split="test")
+    cc_test = new_dataset(subset="cc", split="test")
+
+    # Make sure test and train sets have the same label indices to GO term mapping.
+    mf_test.go_ids_to_label_indices = mf_train.go_ids_to_label_indices
+    bp_test.go_ids_to_label_indices = bp_train.go_ids_to_label_indices
+    cc_test.go_ids_to_label_indices = cc_train.go_ids_to_label_indices
+
+    mf_test.num_classes = mf_train.num_classes
+    bp_test.num_classes = bp_train.num_classes
+    cc_test.num_classes = cc_train.num_classes
 
     new_dataloader = partial(
         DataLoader,
@@ -138,7 +149,9 @@ def main():
     bp_train_loader = new_dataloader(bp_train, shuffle=True)
     cc_train_loader = new_dataloader(cc_train, shuffle=True)
 
-    test_loader = new_dataloader(testing)
+    mf_test_loader = new_dataloader(mf_test)
+    bp_test_loader = new_dataloader(bp_test)
+    cc_test_loader = new_dataloader(cc_test)
 
     model_args = {
         "model_name": args.base_model,
@@ -193,12 +206,20 @@ def main():
         ("cc", iter(cc_train_loader)),
     ]
 
+    test_loaders = [
+        ("mf", iter(mf_test_loader)),
+        ("bp", iter(bp_test_loader)),
+        ("cc", iter(cc_test_loader)),
+    ]
+
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_cross_entropy, total_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
         step = 0
 
-        progress = tqdm(total=args.max_steps_per_epoch, desc=f"Epoch {epoch}", leave=False)
+        progress = tqdm(
+            total=args.max_steps_per_epoch, desc=f"Epoch {epoch}", leave=False
+        )
 
         while step < args.max_steps_per_epoch:
             aspect, dataloader = random.choice(train_loaders)
@@ -257,17 +278,26 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for x, y in tqdm(test_loader, desc="Testing", leave=False):
-                x = x.to(args.device, non_blocking=True)
-                y = y.to(args.device, non_blocking=True)
+            for aspect, dataloader in test_loaders:
+                match aspect:
+                    case "mf":
+                        forward_path = model.forward_mf
+                    case "bp":
+                        forward_path = model.forward_bp
+                    case "cc":
+                        forward_path = model.forward_cc
 
-                with torch.no_grad(), amp_context:
-                    y_pred = model.forward_all(x)
+                for x, y in tqdm(dataloader, desc=f"Testing {aspect}", leave=False):
+                    x = x.to(args.device, non_blocking=True)
+                    y = y.to(args.device, non_blocking=True)
 
-                    y_prob = torch.sigmoid(y_pred)
+                    with torch.no_grad(), amp_context:
+                        y_pred = forward_path(x)
 
-                precision_metric.update(y_prob, y)
-                recall_metric.update(y_prob, y)
+                        y_prob = torch.sigmoid(y_pred)
+
+                    precision_metric.update(y_prob, y)
+                    recall_metric.update(y_prob, y)
 
             precision = precision_metric.compute()
             recall = recall_metric.compute()
@@ -279,7 +309,7 @@ def main():
             logger.add_scalar("Recall", recall, epoch)
 
             print(
-                f"F1: {f1_score:.3f}, Precision: {precision:.3f}, Recall: {recall:.3f}"
+                f"F1: {f1_score:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}"
             )
 
             precision_metric.reset()
