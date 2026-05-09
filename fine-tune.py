@@ -225,13 +225,13 @@ def main():
 
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_cross_entropy, total_gradient_norm = 0.0, 0.0
-        step, total_batches, total_steps = 0, 0, 0
+        step, total_batches, total_steps = 1, 0, 0
 
         progress = new_progress_bar(desc=f"Epoch {epoch}")
 
         optimizer.zero_grad()
 
-        while step < args.max_steps_per_epoch:
+        while step <= args.max_steps_per_epoch:
             forward_path, dataloader = random.choice(train_loaders)
 
             x, y = next(dataloader)

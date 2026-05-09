@@ -310,7 +310,6 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
     ) -> tuple[dict[str, float], ...]:
         """Predicts GO terms based on the input sequence tokens."""
 
-        assert sequence_tokens.ndim == 1, "sequence must be a 1D tensor."
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
         mf_prob, bp_prob, cc_prob = self.predict_all(sequence_tokens)
