@@ -39,9 +39,6 @@ def main():
         default="esmc_300m",
         choices=AVAILABLE_BASE_MODELS,
     )
-    parser.add_argument(
-        "--dataset_subset", default="all", choices=AmiGOBoost.AVAILABLE_SUBSETS
-    )
     parser.add_argument("--num_dataset_processes", default=1, type=int)
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--min_sequence_length", default=1, type=int)
@@ -54,7 +51,6 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=50, type=int)
-    parser.add_argument("--classifier_hidden_ratio", default=1, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -117,34 +113,44 @@ def main():
 
     new_dataset = partial(
         AmiGOBoost,
-        subset=args.dataset_subset,
         graph=graph,
         tokenizer=tokenizer,
         min_sequence_length=args.min_sequence_length,
         max_sequence_length=args.max_sequence_length,
     )
 
-    training = new_dataset(split="train")
-    testing = new_dataset(split="test")
+    mf_train = new_dataset(subset="mf", split="train")
+    bp_train = new_dataset(subset="bp", split="train")
+    cc_train = new_dataset(subset="cc", split="train")
+
+    mf_test = new_dataset(subset="mf", split="test")
+    bp_test = new_dataset(subset="bp", split="test")
+    cc_test = new_dataset(subset="cc", split="test")
 
     new_dataloader = partial(
         DataLoader,
         batch_size=args.batch_size,
-        collate_fn=training.collate_pad_right,
+        collate_fn=mf_train.collate_pad_right,
         pin_memory="cuda" in args.device,
         num_workers=args.num_dataset_processes,
     )
 
-    train_loader = new_dataloader(training, shuffle=True)
-    test_loader = new_dataloader(testing)
+    mf_train_loader = new_dataloader(mf_train, shuffle=True)
+    bp_train_loader = new_dataloader(bp_train, shuffle=True)
+    cc_train_loader = new_dataloader(cc_train, shuffle=True)
 
-    print(f"Training samples: {len(training.dataset):,}")
-    print(f"Testing samples: {len(testing.dataset):,}")
+    mf_test_loader = new_dataloader(mf_test)
+    bp_test_loader = new_dataloader(bp_test)
+    cc_test_loader = new_dataloader(cc_test)
+
+    print(f"Training samples: {len(mf_train.dataset) + len(bp_train.dataset) + len(cc_train.dataset):,}")
+    print(f"Testing samples: {len(mf_test.dataset) + len(bp_test.dataset) + len(cc_test.dataset):,}")
 
     model_args = {
         "model_name": args.base_model,
-        "classifier_hidden_ratio": args.classifier_hidden_ratio,
-        "id2label": training.label_indices_to_go_ids,
+        "indexToMfGoTerm": mf_train.label_indices_to_go_ids,
+        "indexToBpGoTerm": bp_train.label_indices_to_go_ids,
+        "indexToCcGoTerm": cc_train.label_indices_to_go_ids,
         "use_flash_attention": args.use_flash_attention,
     }
 
