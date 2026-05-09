@@ -257,7 +257,49 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         return z_mf, z_bp, z_cc
 
     @torch.inference_mode()
-    def predict_terms(
+    def predict_mf(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts MF GO terms based on the input sequence tokens."""
+
+        z = self.forward_mf(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_bp(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts BP GO terms based on the input sequence tokens."""
+
+        z = self.forward_bp(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_cc(self, sequence_tokens: Tensor) -> Tensor:
+        """Predicts CC GO terms based on the input sequence tokens."""
+
+        z = self.forward_cc(sequence_tokens)
+
+        z_prob = torch.sigmoid(z)
+
+        return z_prob
+
+    @torch.inference_mode()
+    def predict_all(self, sequence_tokens: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Predicts MF, BP, and CC GO terms based on the input sequence tokens."""
+
+        z_mf, z_bp, z_cc = self.forward_all(sequence_tokens)
+
+        mf_prob = torch.sigmoid(z_mf)
+        bp_prob = torch.sigmoid(z_bp)
+        cc_prob = torch.sigmoid(z_cc)
+
+        return mf_prob, bp_prob, cc_prob
+
+    @torch.inference_mode()
+    def predict_all_terms(
         self, sequence_tokens: Tensor, top_p: float = 0.5
     ) -> tuple[dict[str, float], ...]:
         """Predicts GO terms based on the input sequence tokens."""
@@ -265,11 +307,7 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         assert sequence_tokens.ndim == 1, "sequence must be a 1D tensor."
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z_mf, z_bp, z_cc = self.forward_all(sequence_tokens.unsqueeze(0))
-
-        mf_prob = torch.sigmoid(z_mf).squeeze(0).tolist()
-        bp_prob = torch.sigmoid(z_bp).squeeze(0).tolist()
-        cc_prob = torch.sigmoid(z_cc).squeeze(0).tolist()
+        mf_prob, bp_prob, cc_prob = self.predict_all(sequence_tokens)
 
         aspects = [
             (self.indexToMfGoTerm, mf_prob),
@@ -287,14 +325,14 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         return mf_prob, bp_prob, cc_prob
 
     @torch.inference_mode()
-    def predict_subgraph(
+    def predict_all_subgraph(
         self, sequence_tokens: Tensor, top_p: float = 0.5
     ) -> tuple[DiGraph, ...]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        mf_prob, bp_prob, cc_prob = self.predict_terms(sequence_tokens, top_p)
+        mf_prob, bp_prob, cc_prob = self.predict_all_terms(sequence_tokens, top_p)
 
         mf_subgraph, bp_subgraph, cc_subgraph = None, None, None
 

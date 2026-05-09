@@ -2,19 +2,18 @@ import random
 
 from argparse import ArgumentParser
 from functools import partial
-from itertools import cycle
 
 import torch
 
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
 from torch.amp import autocast
 from torch.nn.utils import clip_grad_norm_
 
-from torchmetrics.classification import BinaryPrecision, BinaryRecall
+from metrics import F1Score
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -23,7 +22,7 @@ from esm.tokenization import EsmSequenceTokenizer
 import obonet
 
 from src.esmc_function_classifier.model import EsmcGoTermClassifier
-from data import AmiGOBoost
+from data import AmiGOBoost, LengthBucketBatchSampler
 
 from tqdm import tqdm
 
@@ -140,19 +139,24 @@ def main():
 
     new_dataloader = partial(
         DataLoader,
-        batch_size=args.batch_size,
         collate_fn=mf_train.collate_pad_right,
         pin_memory="cuda" in args.device,
         num_workers=args.num_dataset_processes,
     )
 
-    mf_train_loader = new_dataloader(mf_train, shuffle=True)
-    bp_train_loader = new_dataloader(bp_train, shuffle=True)
-    cc_train_loader = new_dataloader(cc_train, shuffle=True)
+    new_sampler = partial(
+        LengthBucketBatchSampler,
+        batch_size=args.batch_size,
+        num_buckets=10,
+    )
 
-    mf_test_loader = new_dataloader(mf_test)
-    bp_test_loader = new_dataloader(bp_test)
-    cc_test_loader = new_dataloader(cc_test)
+    mf_train_loader = new_dataloader(mf_train, batch_sampler=new_sampler(mf_train))
+    bp_train_loader = new_dataloader(bp_train, batch_sampler=new_sampler(bp_train))
+    cc_train_loader = new_dataloader(cc_train, batch_sampler=new_sampler(cc_train))
+
+    mf_test_loader = new_dataloader(mf_test, batch_size=args.batch_size)
+    bp_test_loader = new_dataloader(bp_test, batch_size=args.batch_size)
+    cc_test_loader = new_dataloader(cc_test, batch_size=args.batch_size)
 
     model_args = {
         "model_name": args.base_model,
@@ -180,8 +184,7 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    precision_metric = BinaryPrecision().to(args.device)
-    recall_metric = BinaryRecall().to(args.device)
+    f1_metric = F1Score().to(args.device)
 
     starting_epoch = 1
 
@@ -200,15 +203,15 @@ def main():
     model.train()
 
     train_loaders = [
-        (model.forward_mf, cycle(mf_train_loader)),
-        (model.forward_bp, cycle(bp_train_loader)),
-        (model.forward_cc, cycle(cc_train_loader)),
+        (model.forward_mf, iter(mf_train_loader)),
+        (model.forward_bp, iter(bp_train_loader)),
+        (model.forward_cc, iter(cc_train_loader)),
     ]
 
     test_loaders = [
-        ("MF", model.forward_mf, mf_test_loader),
-        ("BP", model.forward_bp, bp_test_loader),
-        ("CC", model.forward_cc, cc_test_loader),
+        ("MF", model.predict_mf, mf_test_loader),
+        ("BP", model.predict_bp, bp_test_loader),
+        ("CC", model.predict_cc, cc_test_loader),
     ]
 
     new_progress_bar = partial(
@@ -283,29 +286,23 @@ def main():
                     x = x.to(args.device, non_blocking=True)
                     y = y.to(args.device, non_blocking=True)
 
-                    with torch.no_grad():
-                        y_pred = forward_path(x)
+                    y_prob = forward_path(x)
 
-                        y_prob = torch.sigmoid(y_pred)
+                    f1_metric.update(y_prob, y)
 
-                    precision_metric.update(y_prob, y)
-                    recall_metric.update(y_prob, y)
-
-                precision = precision_metric.compute()
-                recall = recall_metric.compute()
-
-                f1_score = (2 * precision * recall) / (precision + recall)
+                f1_score, precision, recall = f1_metric.compute()
 
                 logger.add_scalar(f"{aspect} F1 Score", f1_score, epoch)
                 logger.add_scalar(f"{aspect} Precision", precision, epoch)
                 logger.add_scalar(f"{aspect} Recall", recall, epoch)
 
                 print(
-                    f"{aspect} F1 Score: {f1_score:.4f}, {aspect} Precision: {precision:.4f}, {aspect} Recall: {recall:.4f}"
+                    f"{aspect} F1 Score: {f1_score:.4f}, "
+                    f"{aspect} Precision: {precision:.4f}, "
+                    f"{aspect} Recall: {recall:.4f}"
                 )
 
-                precision_metric.reset()
-                recall_metric.reset()
+                f1_metric.reset()
 
             model.train()
 

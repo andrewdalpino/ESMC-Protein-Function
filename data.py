@@ -1,3 +1,5 @@
+import random
+
 from datasets import load_dataset
 
 import torch
@@ -81,9 +83,11 @@ class AmiGO(Dataset):
 
         dataset = dataset[split]
 
+        dataset = dataset.map(lambda sample: {"length": len(sample["sequence"])})
+
         dataset = dataset.filter(
-            lambda sample: len(sample["sequence"]) >= min_sequence_length
-            and len(sample["sequence"]) <= max_sequence_length
+            lambda sample: sample["length"] >= min_sequence_length
+            and sample["length"] <= max_sequence_length
         )
 
         self.dataset = dataset
@@ -155,3 +159,40 @@ class AmiGOBoost(AmiGO):
     """The AmiGO dataset with additional phylogenetically-inferred annotations."""
 
     DATASET_NAME = "andrewdalpino/AmiGO-Boost"
+
+
+class LengthBucketBatchSampler:
+    def __init__(self, dataset, batch_size, num_buckets=10):
+        num_buckets = min(num_buckets, max(1, len(dataset) // batch_size))
+
+        n = len(dataset)
+
+        sorted_indices = sorted(range(n), key=lambda i: dataset[i]["length"])
+
+        bucket_size = max(1, n // num_buckets)
+
+        buckets = []
+
+        for i in range(num_buckets):
+            start = i * bucket_size
+            end = n if i == num_buckets - 1 else (i + 1) * bucket_size
+
+            buckets.append(sorted_indices[start:end])
+
+        self.batch_size = batch_size
+        self.buckets = buckets
+
+    def __iter__(self):
+        while True:
+            for bucket in self.buckets:
+                random.shuffle(bucket)
+
+            batches = []
+
+            for bucket in self.buckets:
+                for i in range(0, len(bucket), self.batch_size):
+                    batches.append(bucket[i : i + self.batch_size])
+
+            random.shuffle(batches)
+
+            yield from batches
