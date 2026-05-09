@@ -24,7 +24,7 @@ from huggingface_hub import PyTorchModelHubMixin
 from networkx import DiGraph, is_directed_acyclic_graph, descendants
 
 
-class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
+class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
     """
     A model for predicting Gene Ontology (GO) terms from protein sequences using the
     ESMC base model.
@@ -49,19 +49,6 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
     }
 
     @classmethod
-    def from_pretrained(cls, *args, **kwargs) -> "EsmcGoTermClassifier":
-        """
-        The base model code is not compatible with HuggingFace Hub because the ESMC folks
-        store the tokenizer within the model class, which is not a JSON serializable
-        configuration. In addition, the base code implements a custom `from_pretrained`
-        method but it does not follow the HuggingFace Hub conventions. Therefore, let's
-        compensate by redirecting the call to `from_pretrained` to the HuggingFace Hub
-        mixin and ensure that we load the tokenizer in the constructor.
-        """
-
-        return super(PyTorchModelHubMixin, cls).from_pretrained(*args, **kwargs)
-
-    @classmethod
     def from_esm_pretrained(
         cls,
         model_name: str,
@@ -82,14 +69,15 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
 
         model_args = cls.ESM_PRETRAINED_CONFIGS.get(model_name)
 
-        model = cls(
-            embedding_dimensions=model_args["embedding_dimensions"],
-            num_heads=model_args["num_heads"],
-            num_encoder_layers=model_args["num_encoder_layers"],
-            indexToMfGoTerm=indexToMfGoTerm,
-            indexToBpGoTerm=indexToBpGoTerm,
-            indexToCcGoTerm=indexToCcGoTerm,
-            use_flash_attention=use_flash_attention,
+        # This is required for the base class but is not used otherwise.
+        tokenizer = EsmSequenceTokenizer()
+
+        encoder = ESMC(
+            d_model=model_args["embedding_dimensions"],
+            n_heads=model_args["num_heads"],
+            n_layers=model_args["num_encoder_layers"],
+            tokenizer=tokenizer,
+            use_flash_attn=use_flash_attention,
         )
 
         checkpoint_path = cls.ESM_PRETRAINED_CHECKPOINT_PATHS.get(model_name)
@@ -101,52 +89,50 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
 
         state_dict = torch.load(checkpoint_path)
 
-        model.load_state_dict(state_dict, strict=False)
+        encoder.load_state_dict(state_dict, strict=False)
+
+        # Remove pretrained sequence head from the base model.
+        encoder.sequence_head = Identity()
+
+        model = cls(
+            encoder,
+            indexToMfGoTerm=indexToMfGoTerm,
+            indexToBpGoTerm=indexToBpGoTerm,
+            indexToCcGoTerm=indexToCcGoTerm,
+        )
 
         return model
 
     def __init__(
         self,
-        embedding_dimensions: int,
-        num_heads: int,
-        num_encoder_layers: int,
+        encoder: ESMC,
         indexToMfGoTerm: dict[int, str],
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
-        use_flash_attention: bool,
     ) -> None:
-        # This is required for the base class but is not used otherwise.
-        tokenizer = EsmSequenceTokenizer()
-
-        super().__init__(
-            d_model=embedding_dimensions,
-            n_heads=num_heads,
-            n_layers=num_encoder_layers,
-            tokenizer=tokenizer,
-            use_flash_attn=use_flash_attention,
-        )
-
-        # Remove pretrained sequence head from the base model.
-        self.sequence_head = Identity()
+        super().__init__()
 
         num_mf_classes = len(indexToMfGoTerm)
         num_bp_classes = len(indexToBpGoTerm)
         num_cc_classes = len(indexToCcGoTerm)
 
-        self.mf_head = MultiLabelClassifier(embedding_dimensions, num_mf_classes)
-        self.bp_head = MultiLabelClassifier(embedding_dimensions, num_bp_classes)
-        self.cc_head = MultiLabelClassifier(embedding_dimensions, num_cc_classes)
+        self.encoder = encoder
 
-        self.embedding_dimensions = embedding_dimensions
+        self.mf_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_mf_classes)
+        self.bp_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_bp_classes)
+        self.cc_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_cc_classes)
+
         self.indexToMfGoTerm = indexToMfGoTerm
         self.indexToBpGoTerm = indexToBpGoTerm
         self.indexToCcGoTerm = indexToCcGoTerm
+
+        self.embedding_dimensions = encoder.embed.embedding_dim
 
         self.graph: DiGraph | None = None
 
     @property
     def num_encoder_layers(self) -> int:
-        return len(self.transformer.blocks)
+        return len(self.encoder.blocks)
 
     @property
     def num_params(self) -> int:
@@ -159,7 +145,7 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
     def freeze_base(self) -> None:
         """Prevent the base model parameters from being updated during training."""
 
-        for module in (self.embed, self.transformer):
+        for module in self.encoder.modules():
             for param in module.parameters():
                 param.requires_grad = False
 
@@ -167,9 +153,8 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         """Allow the last k encoder layers to be trainable."""
 
         assert k > 0, "k must be greater than 0."
-        assert k <= self.num_encoder_layers, "k cannot be greater than the number of encoder layers."
 
-        for module in self.transformer.blocks[-k:]:
+        for module in self.encoder.transformer.blocks[-k:]:
             for param in module.parameters():
                 param.requires_grad = True
 
@@ -209,10 +194,55 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
 
         self.graph = graph
 
-    def forward(
+    def forward_mf(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z = self.mf_head.forward(x)
+
+        return z
+
+    def forward_bp(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z = self.bp_head.forward(x)
+
+        return z
+
+    def forward_cc(
+        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
+    ) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(
+            sequence_tokens=sequence_tokens,
+            sequence_id=sequence_id,
+        )
+
+        # Grab the classification token <CLS> embeddings.
+        x = out.embeddings[:, 0, :]
+
+        z = self.cc_head.forward(x)
+
+        return z
+
+    def forward_all(
         self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
     ) -> tuple[Tensor, Tensor, Tensor]:
-        out: ESMCOutput = super().forward(
+        out: ESMCOutput = self.encoder.forward(
             sequence_tokens=sequence_tokens,
             sequence_id=sequence_id,
         )
@@ -235,7 +265,7 @@ class EsmcGoTermClassifier(ESMC, PyTorchModelHubMixin):
         assert sequence_tokens.ndim == 1, "sequence must be a 1D tensor."
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z_mf, z_bp, z_cc = self.forward(sequence_tokens.unsqueeze(0))
+        z_mf, z_bp, z_cc = self.forward_all(sequence_tokens.unsqueeze(0))
 
         mf_prob = torch.sigmoid(z_mf).squeeze(0).tolist()
         bp_prob = torch.sigmoid(z_bp).squeeze(0).tolist()

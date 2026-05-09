@@ -51,6 +51,7 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=50, type=int)
+    parser.add_argument("--max_steps_per_epoch", default=1024, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=2, type=int)
     parser.add_argument("--checkpoint_interval", default=2, type=int)
@@ -59,7 +60,7 @@ def main():
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--run_dir_path", default="./runs", type=str)
-    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--seed", default=None, type=int)
 
     args = parser.parse_args()
@@ -123,9 +124,7 @@ def main():
     bp_train = new_dataset(subset="bp", split="train")
     cc_train = new_dataset(subset="cc", split="train")
 
-    mf_test = new_dataset(subset="mf", split="test")
-    bp_test = new_dataset(subset="bp", split="test")
-    cc_test = new_dataset(subset="cc", split="test")
+    testing = new_dataset(subset="all", split="test")
 
     new_dataloader = partial(
         DataLoader,
@@ -139,12 +138,7 @@ def main():
     bp_train_loader = new_dataloader(bp_train, shuffle=True)
     cc_train_loader = new_dataloader(cc_train, shuffle=True)
 
-    mf_test_loader = new_dataloader(mf_test)
-    bp_test_loader = new_dataloader(bp_test)
-    cc_test_loader = new_dataloader(cc_test)
-
-    print(f"Training samples: {len(mf_train.dataset) + len(bp_train.dataset) + len(cc_train.dataset):,}")
-    print(f"Testing samples: {len(mf_test.dataset) + len(bp_test.dataset) + len(cc_test.dataset):,}")
+    test_loader = new_dataloader(testing)
 
     model_args = {
         "model_name": args.base_model,
@@ -156,8 +150,6 @@ def main():
 
     model = EsmcGoTermClassifier.from_esm_pretrained(**model_args)
 
-    print(f"Number of parameters: {model.num_params:,}")
-
     model.freeze_base()
 
     model.unfreeze_last_k_encoder_layers(args.unfreeze_last_k_layers)
@@ -165,6 +157,7 @@ def main():
     if args.quantization_aware_training:
         model.add_fake_quantized_tensors(args.quant_group_size)
 
+    print(f"Number of parameters: {model.num_params:,}")
     print(f"Number of trainable parameters: {model.num_trainable_parameters:,}")
 
     model = model.to(args.device)
@@ -194,18 +187,35 @@ def main():
 
     print("Fine-tuning ...")
 
+    train_loaders = [
+        ("mf", iter(mf_train_loader)),
+        ("bp", iter(bp_train_loader)),
+        ("cc", iter(cc_train_loader)),
+    ]
+
     for epoch in range(starting_epoch, args.num_epochs + 1):
         total_cross_entropy, total_gradient_norm = 0.0, 0.0
         total_batches, total_steps = 0, 0
+        step = 0
 
-        for step, (x, y) in enumerate(
-            tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1
-        ):
+        while step < args.max_steps_per_epoch:
+            aspect, dataloader = random.choice(train_loaders)
+
+            x, y = next(dataloader)
+
             x = x.to(args.device, non_blocking=True)
             y = y.to(args.device, non_blocking=True)
 
+            match aspect:
+                case "mf":
+                    forward_path = model.forward_mf
+                case "bp":
+                    forward_path = model.forward_bp
+                case "cc":
+                    forward_path = model.forward_cc
+
             with amp_context:
-                y_pred = model.forward(x)
+                y_pred = forward_path(x)
 
                 loss = loss_function(y_pred, y)
 
@@ -225,6 +235,8 @@ def main():
 
                 total_gradient_norm += norm.item()
                 total_steps += 1
+
+            step += 1
 
         average_cross_entropy = total_cross_entropy / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
@@ -246,7 +258,7 @@ def main():
                 y = y.to(args.device, non_blocking=True)
 
                 with torch.no_grad(), amp_context:
-                    y_pred = model.forward(x)
+                    y_pred = model.forward_all(x)
 
                     y_prob = torch.sigmoid(y_pred)
 
