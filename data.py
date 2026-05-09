@@ -11,9 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from esm.tokenization import EsmSequenceTokenizer
 
-import networkx as nx
-
-from networkx import DiGraph
+from networkx import DiGraph, is_directed_acyclic_graph
 
 
 class AmiGO(Dataset):
@@ -45,7 +43,7 @@ class AmiGO(Dataset):
         if split not in self.AVAILABLE_SPLITS:
             raise ValueError(f"Split '{split}' is invalid.")
 
-        if not nx.is_directed_acyclic_graph(graph):
+        if not is_directed_acyclic_graph(graph):
             raise ValueError(
                 "Invalid GO graph, must be a directed acyclic graph (DAG)."
             )
@@ -55,7 +53,7 @@ class AmiGO(Dataset):
                 f"Min sequence length must be greater than 0, {min_sequence_length} given."
             )
 
-        if min_sequence_length < 1:
+        if max_sequence_length < 1:
             raise ValueError(
                 f"Max sequence length must be greater than 0, {max_sequence_length} given."
             )
@@ -167,7 +165,7 @@ class LengthBucketBatchSampler:
 
         n = len(dataset)
 
-        sorted_indices = sorted(range(n), key=lambda i: dataset[i]["length"])
+        sorted_indices = sorted(range(n), key=lambda i: dataset.dataset[i]["length"])
 
         bucket_size = max(1, n // num_buckets)
 

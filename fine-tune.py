@@ -46,15 +46,16 @@ def main():
     parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
     parser.add_argument("--quantization_aware_training", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
-    parser.add_argument("--learning_rate", default=5e-4, type=float)
+    parser.add_argument("--learning_rate", default=2e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--num_length_buckets", default=10, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
-    parser.add_argument("--num_epochs", default=50, type=int)
+    parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
-    parser.add_argument("--eval_interval", default=2, type=int)
-    parser.add_argument("--checkpoint_interval", default=2, type=int)
+    parser.add_argument("--eval_interval", default=5, type=int)
+    parser.add_argument("--checkpoint_interval", default=5, type=int)
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
@@ -147,7 +148,7 @@ def main():
     new_sampler = partial(
         LengthBucketBatchSampler,
         batch_size=args.batch_size,
-        num_buckets=10,
+        num_buckets=args.num_length_buckets,
     )
 
     mf_train_loader = new_dataloader(mf_train, batch_sampler=new_sampler(mf_train))

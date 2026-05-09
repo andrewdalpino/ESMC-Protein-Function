@@ -69,15 +69,14 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         model_args = cls.ESM_PRETRAINED_CONFIGS.get(model_name)
 
-        # This is required for the base class but is not used otherwise.
-        tokenizer = EsmSequenceTokenizer()
-
-        encoder = ESMC(
-            d_model=model_args["embedding_dimensions"],
-            n_heads=model_args["num_heads"],
-            n_layers=model_args["num_encoder_layers"],
-            tokenizer=tokenizer,
-            use_flash_attn=use_flash_attention,
+        model = cls(
+            embedding_dimensions=model_args["embedding_dimensions"],
+            num_heads=model_args["num_heads"],
+            num_encoder_layers=model_args["num_encoder_layers"],
+            indexToMfGoTerm=indexToMfGoTerm,
+            indexToBpGoTerm=indexToBpGoTerm,
+            indexToCcGoTerm=indexToCcGoTerm,
+            use_flash_attention=use_flash_attention,
         )
 
         checkpoint_path = cls.ESM_PRETRAINED_CHECKPOINT_PATHS.get(model_name)
@@ -89,28 +88,35 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         state_dict = torch.load(checkpoint_path)
 
-        encoder.load_state_dict(state_dict, strict=False)
-
-        # Remove pretrained sequence head from the base model.
-        encoder.sequence_head = Identity()
-
-        model = cls(
-            encoder,
-            indexToMfGoTerm=indexToMfGoTerm,
-            indexToBpGoTerm=indexToBpGoTerm,
-            indexToCcGoTerm=indexToCcGoTerm,
-        )
+        model.encoder.load_state_dict(state_dict, strict=False)
 
         return model
 
     def __init__(
         self,
-        encoder: ESMC,
+        embedding_dimensions: int,
+        num_heads: int,
+        num_encoder_layers: int,
         indexToMfGoTerm: dict[int, str],
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
+        use_flash_attention: bool,
     ) -> None:
         super().__init__()
+
+        # This is required for the base class but is not used otherwise.
+        tokenizer = EsmSequenceTokenizer()
+
+        encoder = ESMC(
+            d_model=embedding_dimensions,
+            n_heads=num_heads,
+            n_layers=num_encoder_layers,
+            tokenizer=tokenizer,
+            use_flash_attn=use_flash_attention,
+        )
+
+        # Remove pretrained sequence head from the encoder.
+        encoder.sequence_head = Identity()
 
         num_mf_classes = len(indexToMfGoTerm)
         num_bp_classes = len(indexToBpGoTerm)
