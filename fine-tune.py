@@ -137,10 +137,6 @@ def main():
     bp_test.go_ids_to_label_indices = bp_train.go_ids_to_label_indices
     cc_test.go_ids_to_label_indices = cc_train.go_ids_to_label_indices
 
-    mf_test.num_classes = mf_train.num_classes
-    bp_test.num_classes = bp_train.num_classes
-    cc_test.num_classes = cc_train.num_classes
-
     new_dataloader = partial(
         DataLoader,
         collate_fn=mf_train.collate_pad_right,

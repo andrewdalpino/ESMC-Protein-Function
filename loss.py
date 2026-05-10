@@ -10,7 +10,7 @@ class AdaptiveLossWeighting(Module):
     Adaptively weighting the loss of each aspect (MF, BP, CC) in the Gene Ontology prediction task.
     """
 
-    def __init__(self, aspects: set, min_weight: float = 0.1):
+    def __init__(self, aspects: set, min_weight: float):
         super().__init__()
 
         assert len(aspects) > 0, "Aspects list must contain at least 1 aspect."

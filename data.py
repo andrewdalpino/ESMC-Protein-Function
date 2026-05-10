@@ -77,8 +77,6 @@ class AmiGO(Dataset):
 
                     label_index += 1
 
-        num_classes = len(go_ids_to_label_indices)
-
         dataset = dataset[split]
 
         dataset = dataset.map(lambda sample: {"length": len(sample["sequence"])})
@@ -94,7 +92,14 @@ class AmiGO(Dataset):
         self.min_sequence_length = min_sequence_length
         self.max_sequence_length = max_sequence_length
         self.go_ids_to_label_indices = go_ids_to_label_indices
-        self.num_classes = num_classes
+
+    @property
+    def num_classes(self):
+        """
+        Returns the number of classes (i.e. gene ontology terms) in the dataset.
+        """
+
+        return len(self.go_ids_to_label_indices)
 
     @property
     def label_indices_to_go_ids(self):
