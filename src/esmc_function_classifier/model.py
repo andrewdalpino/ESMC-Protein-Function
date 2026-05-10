@@ -24,10 +24,10 @@ from huggingface_hub import PyTorchModelHubMixin
 from networkx import DiGraph, is_directed_acyclic_graph, descendants
 
 
-class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
+class ESMCGeneOntology(Module, PyTorchModelHubMixin):
     """
-    A model for predicting Gene Ontology (GO) terms from protein sequences using the
-    ESMC base model.
+    A model for predicting the Gene Ontology (GO) subgraph from protein sequences using the
+    ESMC base model as an encoder.
     """
 
     ESM_PRETRAINED_CONFIGS = {
@@ -57,7 +57,7 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
         use_flash_attention: bool,
-    ) -> "EsmcGoTermClassifier":
+    ) -> "ESMCGeneOntology":
         """
         Since the base model pretrained weights are stored in a proprietary pickle format,
         let's implement a custom factory method to load those weights.
@@ -107,7 +107,6 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
     ) -> None:
         super().__init__()
 
-        # This is required for the base class but is not used otherwise.
         tokenizer = EsmSequenceTokenizer()
 
         encoder = ESMC(
@@ -145,6 +144,8 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         self.pad_token = tokenizer.pad_token_id
 
         self.graph: DiGraph | None = None
+
+        self.tokenizer = tokenizer
 
     @property
     def num_encoder_layers(self) -> int:
@@ -282,7 +283,6 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         return z_mf, z_bp, z_cc
 
-    @torch.inference_mode()
     def predict_all_terms(
         self, x: Tensor, top_p: float = 0.5
     ) -> tuple[dict[str, float], ...]:
@@ -307,7 +307,6 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         return mf_prob, bp_prob, cc_prob
 
-    @torch.inference_mode()
     def predict_all_subgraph(
         self, x: Tensor, top_p: float = 0.5
     ) -> tuple[DiGraph, ...]:
@@ -379,8 +378,8 @@ class MultiLabelClassifier(Module):
 
 class AttentionPool(Module):
     """
-    An multi-headed attention pooling layer that combines token embeddings into a single
-    vector representation.
+    A pooling layer that combines token embeddings into a single vector representation
+    using multi-headed attention.
     """
 
     def __init__(self, embedding_dimensions: int, num_heads: int):

@@ -6,7 +6,7 @@ from functools import partial
 import torch
 
 from torch.nn import BCEWithLogitsLoss
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader
 from torch.cuda import is_available as cuda_is_available, is_bf16_supported
 from torch.backends.mps import is_available as mps_is_available
@@ -21,12 +21,13 @@ from esm.tokenization import EsmSequenceTokenizer
 
 import obonet
 
-from src.esmc_function_classifier.model import EsmcGoTermClassifier
+from src.esmc_function_classifier.model import ESMCGeneOntology
 from data import AmiGOBoost, LengthBucketBatchSampler, SortedLengthBatchSampler
+from loss import AdaptiveLossWeighting
 
 from tqdm import tqdm
 
-AVAILABLE_BASE_MODELS = EsmcGoTermClassifier.ESM_PRETRAINED_CONFIGS.keys()
+AVAILABLE_BASE_MODELS = ESMCGeneOntology.ESM_PRETRAINED_CONFIGS.keys()
 
 
 def main():
@@ -47,13 +48,14 @@ def main():
     parser.add_argument("--quantization_aware_training", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
     parser.add_argument("--learning_rate", default=3e-4, type=float)
+    parser.add_argument("--aspect_learning_rate", default=1e-3, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
-    parser.add_argument("--num_length_buckets", default=20, type=int)
+    parser.add_argument("--num_length_buckets", default=30, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
-    parser.add_argument("--num_pool_heads", default=4, type=int)
+    parser.add_argument("--num_attention_pool_heads", default=4, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=5, type=int)
     parser.add_argument("--checkpoint_interval", default=5, type=int)
@@ -167,14 +169,14 @@ def main():
 
     model_args = {
         "model_name": args.base_model,
-        "num_pool_heads": args.num_pool_heads,
+        "num_pool_heads": args.num_attention_pool_heads,
         "indexToMfGoTerm": mf_train.label_indices_to_go_ids,
         "indexToBpGoTerm": bp_train.label_indices_to_go_ids,
         "indexToCcGoTerm": cc_train.label_indices_to_go_ids,
         "use_flash_attention": args.use_flash_attention,
     }
 
-    model = EsmcGoTermClassifier.from_esm_pretrained(**model_args)
+    model = ESMCGeneOntology.from_esm_pretrained(**model_args)
 
     model.freeze_base()
 
@@ -190,7 +192,11 @@ def main():
 
     loss_function = BCEWithLogitsLoss()
 
+    loss_weight = AdaptiveLossWeighting({"MF", "BP", "CC"}, 0.1).to(args.device)
+
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+
+    aspect_optimizer = SGD(loss_weight.parameters(), lr=args.aspect_learning_rate)
 
     f1_metric = F1Score().to(args.device)
 
@@ -203,6 +209,7 @@ def main():
 
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
+        aspect_optimizer.load_state_dict(checkpoint["aspect_optimizer"])
 
         starting_epoch += checkpoint["epoch"]
 
@@ -210,13 +217,13 @@ def main():
 
     model.train()
 
-    train_loaders = [
-        (model.forward_mf, iter(mf_train_loader)),
-        (model.forward_bp, iter(bp_train_loader)),
-        (model.forward_cc, iter(cc_train_loader)),
+    train_paths = [
+        ("MF", model.forward_mf, iter(mf_train_loader)),
+        ("BP", model.forward_bp, iter(bp_train_loader)),
+        ("CC", model.forward_cc, iter(cc_train_loader)),
     ]
 
-    test_loaders = [
+    test_paths = [
         ("MF", model.predict_mf, mf_test_loader),
         ("BP", model.predict_bp, bp_test_loader),
         ("CC", model.predict_cc, cc_test_loader),
@@ -237,9 +244,10 @@ def main():
         progress = new_progress_bar(desc=f"Epoch {epoch}")
 
         optimizer.zero_grad()
+        aspect_optimizer.zero_grad()
 
         while step <= args.max_steps_per_epoch:
-            forward_path, dataloader = random.choice(train_loaders)
+            aspect, forward, dataloader = random.choice(train_paths)
 
             x, y = next(dataloader)
 
@@ -247,9 +255,10 @@ def main():
             y = y.to(args.device, non_blocking=True)
 
             with amp_context:
-                y_pred = forward_path(x)
+                y_pred = forward(x)
 
-                loss = loss_function(y_pred, y)
+                loss = loss_function.forward(y_pred, y)
+                loss = loss_weight.forward(loss, aspect)
 
                 scaled_loss = loss / args.gradient_accumulation_steps
 
@@ -260,10 +269,13 @@ def main():
 
             if step % args.gradient_accumulation_steps == 0:
                 norm = clip_grad_norm_(model.parameters(), args.max_gradient_norm)
+                _ = clip_grad_norm_(loss_weight.parameters(), args.max_gradient_norm)
 
                 optimizer.step()
+                aspect_optimizer.step()
 
                 optimizer.zero_grad()
+                aspect_optimizer.zero_grad()
 
                 total_gradient_norm += norm.item()
                 total_steps += 1
@@ -277,8 +289,13 @@ def main():
         average_cross_entropy = total_cross_entropy / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
 
+        loss_weights = loss_weight.aspect_weights.detach().cpu().numpy()
+
         logger.add_scalar("Cross Entropy", average_cross_entropy, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
+        logger.add_scalar("MF Weight", loss_weights[0], epoch)
+        logger.add_scalar("BP Weight", loss_weights[1], epoch)
+        logger.add_scalar("CC Weight", loss_weights[2], epoch)
 
         print(
             f"Epoch {epoch}:",
@@ -289,12 +306,12 @@ def main():
         if epoch % args.eval_interval == 0:
             model.eval()
 
-            for aspect, forward_path, dataloader in test_loaders:
+            for aspect, forward, dataloader in test_paths:
                 for x, y in tqdm(dataloader, desc=f"Testing {aspect}", leave=False):
                     x = x.to(args.device, non_blocking=True)
                     y = y.to(args.device, non_blocking=True)
 
-                    y_prob = forward_path(x)
+                    y_prob = forward(x)
 
                     f1_metric.update(y_prob, y)
 
@@ -320,6 +337,7 @@ def main():
                 "model_args": model_args,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
+                "aspect_optimizer": aspect_optimizer.state_dict(),
             }
 
             torch.save(checkpoint, args.checkpoint_path)
