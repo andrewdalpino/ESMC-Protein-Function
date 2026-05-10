@@ -22,7 +22,7 @@ from esm.tokenization import EsmSequenceTokenizer
 import obonet
 
 from src.esmc_function_classifier.model import EsmcGoTermClassifier
-from data import AmiGOBoost, LengthBucketBatchSampler
+from data import AmiGOBoost, LengthBucketBatchSampler, SortedLengthBatchSampler
 
 from tqdm import tqdm
 
@@ -31,7 +31,7 @@ AVAILABLE_BASE_MODELS = EsmcGoTermClassifier.ESM_PRETRAINED_CONFIGS.keys()
 
 def main():
     parser = ArgumentParser(
-        description="Fine-tune an ESMC model for gene ontology (GO) term prediction."
+        description="Fine-tune an ESMC model for Gene Ontology (GO) term prediction."
     )
 
     parser.add_argument(
@@ -46,13 +46,14 @@ def main():
     parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
     parser.add_argument("--quantization_aware_training", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
-    parser.add_argument("--learning_rate", default=2e-4, type=float)
+    parser.add_argument("--learning_rate", default=3e-4, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
-    parser.add_argument("--num_length_buckets", default=10, type=int)
+    parser.add_argument("--num_length_buckets", default=20, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=100, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
+    parser.add_argument("--num_pool_heads", default=4, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=5, type=int)
     parser.add_argument("--checkpoint_interval", default=5, type=int)
@@ -155,12 +156,18 @@ def main():
     bp_train_loader = new_dataloader(bp_train, batch_sampler=new_sampler(bp_train))
     cc_train_loader = new_dataloader(cc_train, batch_sampler=new_sampler(cc_train))
 
-    mf_test_loader = new_dataloader(mf_test, batch_size=args.batch_size)
-    bp_test_loader = new_dataloader(bp_test, batch_size=args.batch_size)
-    cc_test_loader = new_dataloader(cc_test, batch_size=args.batch_size)
+    new_sampler = partial(
+        SortedLengthBatchSampler,
+        batch_size=args.batch_size,
+    )
+
+    mf_test_loader = new_dataloader(mf_test, batch_sampler=new_sampler(mf_test))
+    bp_test_loader = new_dataloader(bp_test, batch_sampler=new_sampler(bp_test))
+    cc_test_loader = new_dataloader(cc_test, batch_sampler=new_sampler(cc_test))
 
     model_args = {
         "model_name": args.base_model,
+        "num_pool_heads": args.num_pool_heads,
         "indexToMfGoTerm": mf_train.label_indices_to_go_ids,
         "indexToBpGoTerm": bp_train.label_indices_to_go_ids,
         "indexToCcGoTerm": cc_train.label_indices_to_go_ids,

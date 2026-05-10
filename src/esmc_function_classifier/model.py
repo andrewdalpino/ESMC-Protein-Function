@@ -1,11 +1,11 @@
 from copy import copy
-
+from functools import partial
 from collections import defaultdict
 
 import torch
 
 from torch import Tensor
-from torch.nn import Module, Identity, Linear
+from torch.nn import Module, Identity, Linear, LayerNorm, Softmax, Flatten
 
 from torchao.quantization import Int8WeightOnlyConfig, quantize_
 
@@ -52,6 +52,7 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
     def from_esm_pretrained(
         cls,
         model_name: str,
+        num_pool_heads: int,
         indexToMfGoTerm: dict[int, str],
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
@@ -73,6 +74,7 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
             embedding_dimensions=model_args["embedding_dimensions"],
             num_heads=model_args["num_heads"],
             num_encoder_layers=model_args["num_encoder_layers"],
+            num_pool_heads=num_pool_heads,
             indexToMfGoTerm=indexToMfGoTerm,
             indexToBpGoTerm=indexToBpGoTerm,
             indexToCcGoTerm=indexToCcGoTerm,
@@ -97,6 +99,7 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
         embedding_dimensions: int,
         num_heads: int,
         num_encoder_layers: int,
+        num_pool_heads: int,
         indexToMfGoTerm: dict[int, str],
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
@@ -124,15 +127,22 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         self.encoder = encoder
 
-        self.mf_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_mf_classes)
-        self.bp_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_bp_classes)
-        self.cc_head = MultiLabelClassifier(encoder.embed.embedding_dim, num_cc_classes)
+        new_classifier = partial(
+            MultiLabelClassifier,
+            embedding_dimensions=embedding_dimensions,
+            num_heads=num_pool_heads,
+        )
+
+        self.mf_head = new_classifier(num_classes=num_mf_classes)
+        self.bp_head = new_classifier(num_classes=num_bp_classes)
+        self.cc_head = new_classifier(num_classes=num_cc_classes)
 
         self.indexToMfGoTerm = indexToMfGoTerm
         self.indexToBpGoTerm = indexToBpGoTerm
         self.indexToCcGoTerm = indexToCcGoTerm
 
-        self.embedding_dimensions = encoder.embed.embedding_dim
+        self.embedding_dimensions = embedding_dimensions
+        self.pad_token = tokenizer.pad_token_id
 
         self.graph: DiGraph | None = None
 
@@ -200,119 +210,87 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
         self.graph = graph
 
-    def forward_mf(
-        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
-    ) -> Tensor:
-        out: ESMCOutput = self.encoder.forward(
-            sequence_tokens=sequence_tokens,
-            sequence_id=sequence_id,
-        )
+    def forward_mf(self, x: Tensor) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
-        # Grab the classification token <CLS> embeddings.
-        x = out.embeddings[:, 0, :]
-
-        z = self.mf_head.forward(x)
+        z = self.mf_head.forward(out.embeddings)
 
         return z
 
-    def forward_bp(
-        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
-    ) -> Tensor:
-        out: ESMCOutput = self.encoder.forward(
-            sequence_tokens=sequence_tokens,
-            sequence_id=sequence_id,
-        )
+    def forward_bp(self, x: Tensor) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
-        # Grab the classification token <CLS> embeddings.
-        x = out.embeddings[:, 0, :]
-
-        z = self.bp_head.forward(x)
+        z = self.bp_head.forward(out.embeddings)
 
         return z
 
-    def forward_cc(
-        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
-    ) -> Tensor:
-        out: ESMCOutput = self.encoder.forward(
-            sequence_tokens=sequence_tokens,
-            sequence_id=sequence_id,
-        )
+    def forward_cc(self, x: Tensor) -> Tensor:
+        out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
-        # Grab the classification token <CLS> embeddings.
-        x = out.embeddings[:, 0, :]
-
-        z = self.cc_head.forward(x)
+        z = self.cc_head.forward(out.embeddings)
 
         return z
 
-    def forward_all(
-        self, sequence_tokens: Tensor, sequence_id: Tensor | None = None
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        out: ESMCOutput = self.encoder.forward(
-            sequence_tokens=sequence_tokens,
-            sequence_id=sequence_id,
-        )
+    def forward_all(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
-        # Grab the classification token <CLS> embeddings.
-        x = out.embeddings[:, 0, :]
-
-        z_mf = self.mf_head.forward(x)
-        z_bp = self.bp_head.forward(x)
-        z_cc = self.cc_head.forward(x)
+        z_mf = self.mf_head.forward(out.embeddings)
+        z_bp = self.bp_head.forward(out.embeddings)
+        z_cc = self.cc_head.forward(out.embeddings)
 
         return z_mf, z_bp, z_cc
 
     @torch.inference_mode()
-    def predict_mf(self, sequence_tokens: Tensor) -> Tensor:
+    def predict_mf(self, x: Tensor) -> Tensor:
         """Predicts MF GO terms based on the input sequence tokens."""
 
-        z = self.forward_mf(sequence_tokens)
+        z = self.forward_mf(x)
 
-        z_prob = torch.sigmoid(z)
+        z = torch.sigmoid(z)
 
-        return z_prob
+        return z
 
     @torch.inference_mode()
-    def predict_bp(self, sequence_tokens: Tensor) -> Tensor:
+    def predict_bp(self, x: Tensor) -> Tensor:
         """Predicts BP GO terms based on the input sequence tokens."""
 
-        z = self.forward_bp(sequence_tokens)
+        z = self.forward_bp(x)
 
-        z_prob = torch.sigmoid(z)
+        z = torch.sigmoid(z)
 
-        return z_prob
+        return z
 
     @torch.inference_mode()
-    def predict_cc(self, sequence_tokens: Tensor) -> Tensor:
+    def predict_cc(self, x: Tensor) -> Tensor:
         """Predicts CC GO terms based on the input sequence tokens."""
 
-        z = self.forward_cc(sequence_tokens)
+        z = self.forward_cc(x)
 
-        z_prob = torch.sigmoid(z)
+        z = torch.sigmoid(z)
 
-        return z_prob
+        return z
 
     @torch.inference_mode()
-    def predict_all(self, sequence_tokens: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    def predict_all(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Predicts MF, BP, and CC GO terms based on the input sequence tokens."""
 
-        z_mf, z_bp, z_cc = self.forward_all(sequence_tokens)
+        z_mf, z_bp, z_cc = self.forward_all(x)
 
-        mf_prob = torch.sigmoid(z_mf)
-        bp_prob = torch.sigmoid(z_bp)
-        cc_prob = torch.sigmoid(z_cc)
+        z_mf = torch.sigmoid(z_mf)
+        z_bp = torch.sigmoid(z_bp)
+        z_cc = torch.sigmoid(z_cc)
 
-        return mf_prob, bp_prob, cc_prob
+        return z_mf, z_bp, z_cc
 
     @torch.inference_mode()
     def predict_all_terms(
-        self, sequence_tokens: Tensor, top_p: float = 0.5
+        self, x: Tensor, top_p: float = 0.5
     ) -> tuple[dict[str, float], ...]:
         """Predicts GO terms based on the input sequence tokens."""
 
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        mf_prob, bp_prob, cc_prob = self.predict_all(sequence_tokens)
+        mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
         aspects = [
             (self.indexToMfGoTerm, mf_prob),
@@ -331,13 +309,13 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 
     @torch.inference_mode()
     def predict_all_subgraph(
-        self, sequence_tokens: Tensor, top_p: float = 0.5
+        self, x: Tensor, top_p: float = 0.5
     ) -> tuple[DiGraph, ...]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        mf_prob, bp_prob, cc_prob = self.predict_all_terms(sequence_tokens, top_p)
+        mf_prob, bp_prob, cc_prob = self.predict_all_terms(x, top_p)
 
         mf_subgraph, bp_subgraph, cc_subgraph = None, None, None
 
@@ -370,20 +348,63 @@ class EsmcGoTermClassifier(Module, PyTorchModelHubMixin):
 class MultiLabelClassifier(Module):
     """A 2-layer multi-label binary classification head with SwiGLU activation."""
 
-    def __init__(self, embedding_dimensions: int, num_classes: int):
+    def __init__(self, embedding_dimensions: int, num_heads: int, num_classes: int):
         super().__init__()
 
         assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
         assert num_classes > 0, "num_classes must be greater than 0."
 
+        self.pool = AttentionPool(embedding_dimensions, num_heads)
+
         self.linear1 = Linear(embedding_dimensions, 2 * embedding_dimensions)
-        self.linear2 = Linear(embedding_dimensions, num_classes)
+        self.linear2 = Linear(embedding_dimensions, num_classes, bias=False)
+
+        self.norm = LayerNorm(embedding_dimensions)
 
         self.swiglu = SwiGLU()
 
     def forward(self, x: Tensor) -> Tensor:
-        z = self.linear1(x)
-        z = self.swiglu(z)
-        z = self.linear2(z)
+        x = self.pool.forward(x)
+
+        z = self.linear1.forward(x)
+        z = self.swiglu.forward(z)
+
+        z = x + z
+
+        z = self.norm.forward(z)
+        z = self.linear2.forward(z)
+
+        return z
+
+
+class AttentionPool(Module):
+    """
+    An multi-headed attention pooling layer that combines token embeddings into a single
+    vector representation.
+    """
+
+    def __init__(self, embedding_dimensions: int, num_heads: int):
+        super().__init__()
+
+        assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
+        assert num_heads > 0, "num_heads must be greater than 0."
+
+        hidden_dimensions = num_heads * embedding_dimensions
+
+        self.linear1 = Linear(embedding_dimensions, num_heads)
+        self.linear2 = Linear(hidden_dimensions, embedding_dimensions)
+
+        self.softmax = Softmax(dim=1)
+
+        self.flatten = Flatten()
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.linear1.forward(x)
+        w = self.softmax.forward(z)
+
+        z = (w.unsqueeze(2) * x.unsqueeze(-1)).sum(dim=1)
+
+        z = self.flatten.forward(z)
+        z = self.linear2.forward(z)
 
         return z

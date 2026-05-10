@@ -194,3 +194,20 @@ class LengthBucketBatchSampler:
             random.shuffle(batches)
 
             yield from batches
+
+
+class SortedLengthBatchSampler:
+    def __init__(self, dataset, batch_size):
+        n = len(dataset)
+
+        sorted_indices = sorted(range(n), key=lambda i: dataset.dataset[i]["length"])
+
+        self.batches = [
+            sorted_indices[i : i + batch_size] for i in range(0, n, batch_size)
+        ]
+
+    def __iter__(self):
+        return iter(self.batches)
+
+    def __len__(self):
+        return len(self.batches)
