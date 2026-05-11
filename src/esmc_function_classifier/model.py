@@ -177,7 +177,12 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
     def add_fake_quantized_tensors(self, group_size: int) -> None:
         """Prepare the model for quantization-aware training."""
 
-        assert group_size % self.embedding_dimensions == 0, "Invalid quant group size."
+        for module in self.modules():
+            if isinstance(module, Linear):
+                assert module.in_features % group_size == 0, (
+                    f"quant_group_size ({group_size}) must divide in_features ({module.in_features})"
+                    f" of layer {module}."
+                )
 
         weight_config = FakeQuantizeConfig(torch.int8, group_size=group_size)
 
