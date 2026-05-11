@@ -279,24 +279,29 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return z_mf, z_bp, z_cc
 
+    def _build_terms(
+        self, probs: Tensor, mapping: dict[int, str], top_p: float
+    ) -> list[dict[str, float]]:
+        terms = [
+            {
+                mapping[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+            for sample_probs in probs
+        ]
+
+        return terms
+
     @torch.inference_mode()
     def predict_mf_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts MF GO terms based on the input sequence tokens."""
 
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z_prob = self.predict_mf(x)
+        terms = self._build_terms(self.predict_mf(x), self.indexToMfGoTerm, top_p)
 
-        results = [
-            {
-                self.indexToMfGoTerm[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-            for sample_probs in z_prob
-        ]
-
-        return results
+        return terms
 
     @torch.inference_mode()
     def predict_bp_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
@@ -304,18 +309,9 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z_prob = self.predict_bp(x)
+        terms = self._build_terms(self.predict_bp(x), self.indexToBpGoTerm, top_p)
 
-        results = [
-            {
-                self.indexToBpGoTerm[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-            for sample_probs in z_prob
-        ]
-
-        return results
+        return terms
 
     @torch.inference_mode()
     def predict_cc_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
@@ -323,18 +319,9 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
-        z_prob = self.predict_cc(x)
+        terms = self._build_terms(self.predict_cc(x), self.indexToCcGoTerm, top_p)
 
-        results = [
-            {
-                self.indexToCcGoTerm[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-            for sample_probs in z_prob
-        ]
-
-        return results
+        return terms
 
     @torch.inference_mode()
     def predict_all_terms(
@@ -346,27 +333,11 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
-        aspects = [
-            (self.indexToMfGoTerm, mf_prob),
-            (self.indexToBpGoTerm, bp_prob),
-            (self.indexToCcGoTerm, cc_prob),
-        ]
+        mf_terms = self._build_terms(mf_prob, self.indexToMfGoTerm, top_p)
+        bp_terms = self._build_terms(bp_prob, self.indexToBpGoTerm, top_p)
+        cc_terms = self._build_terms(cc_prob, self.indexToCcGoTerm, top_p)
 
-        batch_size = mf_prob.shape[0]
-
-        results = [
-            tuple(
-                {
-                    mapping[index]: prob.item()
-                    for index, prob in enumerate(probs[i])
-                    if prob > top_p
-                }
-                for mapping, probs in aspects
-            )
-            for i in range(batch_size)
-        ]
-
-        return results
+        return list(zip(mf_terms, bp_terms, cc_terms))
 
     def _build_subgraphs(
         self, probs: Tensor, mapping: dict[int, str], top_p: float
