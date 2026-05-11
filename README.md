@@ -35,7 +35,7 @@ import torch
 
 from esm.tokenization import EsmSequenceTokenizer
 
-from esmc_function_classifier.model import ESMCGeneOntology
+from esmc_function_classifier.model import ESMCProteinFunction
 
 
 model_name = "andrewdalpino/ESMC-300M-Protein-Function"
@@ -46,7 +46,7 @@ top_p = 0.5
 
 tokenizer = EsmSequenceTokenizer()
 
-model = ESMCGeneOntology.from_pretrained(model_name)
+model = ESMCProteinFunction.from_pretrained(model_name)
 
 out = tokenizer(sequence, max_length=2048, truncation=True)
 

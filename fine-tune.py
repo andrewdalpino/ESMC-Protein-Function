@@ -21,13 +21,13 @@ from esm.tokenization import EsmSequenceTokenizer
 
 import obonet
 
-from src.esmc_function_classifier.model import ESMCGeneOntology
+from src.esmc_protein_function.model import ESMCProteinFunction
 from data import AmiGOBoost, LengthBucketBatchSampler, SortedLengthBatchSampler
 from loss import AdaptiveLossWeighting
 
 from tqdm import tqdm
 
-AVAILABLE_BASE_MODELS = ESMCGeneOntology.ESM_PRETRAINED_CONFIGS.keys()
+AVAILABLE_BASE_MODELS = ESMCProteinFunction.ESM_PRETRAINED_CONFIGS.keys()
 
 
 def main():
@@ -172,7 +172,7 @@ def main():
         "use_flash_attention": args.use_flash_attention,
     }
 
-    model = ESMCGeneOntology.from_esm_pretrained(**model_args)
+    model = ESMCProteinFunction.from_esm_pretrained(**model_args)
 
     model.freeze_base()
 

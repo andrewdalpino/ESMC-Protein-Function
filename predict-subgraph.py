@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 
 import torch
 
-from src.esmc_function_classifier.model import ESMCGeneOntology
+from src.esmc_protein_function.model import ESMCProteinFunction
 
 from torch.cuda import is_available as cuda_is_available
 from torch.backends.mps import is_available as mps_is_available
@@ -62,7 +62,7 @@ def main():
         args.checkpoint_path, map_location="cpu", weights_only=False
     )
 
-    model = ESMCGeneOntology.from_esm_pretrained(**checkpoint["model_args"])
+    model = ESMCProteinFunction.from_esm_pretrained(**checkpoint["model_args"])
 
     model.load_state_dict(checkpoint["model"])
 

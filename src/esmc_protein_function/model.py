@@ -23,7 +23,7 @@ from huggingface_hub import PyTorchModelHubMixin
 from networkx import DiGraph, is_directed_acyclic_graph, descendants
 
 
-class ESMCGeneOntology(Module, PyTorchModelHubMixin):
+class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     """
     A model for predicting the Gene Ontology (GO) subgraph from protein sequences using the
     ESMC base model as an encoder.
@@ -56,7 +56,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
         indexToBpGoTerm: dict[int, str],
         indexToCcGoTerm: dict[int, str],
         use_flash_attention: bool,
-    ) -> "ESMCGeneOntology":
+    ) -> "ESMCProteinFunction":
         """
         Since the base model pretrained weights are stored in a proprietary pickle format,
         let's implement a custom factory method to load those weights.
