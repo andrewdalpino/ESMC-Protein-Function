@@ -368,25 +368,18 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return results
 
-    @torch.inference_mode()
-    def predict_mf_subgraphs(
-        self, x: Tensor, top_p: float = 0.5
+    def _build_subgraphs(
+        self, probs: Tensor, mapping: dict[int, str], top_p: float
     ) -> list[tuple[DiGraph, dict[str, float]]]:
-        """Predicts a subgraph of the MF aspect of the GO based on the input sequence tokens."""
-
-        assert self.graph is not None, "Gene Ontology graph is not loaded."
-
-        mf_prob = self.predict_mf(x)
-
-        batch_size = mf_prob.shape[0]
+        batch_size = probs.shape[0]
 
         results = []
 
         for i in range(batch_size):
-            sample_probs = mf_prob[i]
+            sample_probs = probs[i]
 
             child_nodes = {
-                self.indexToMfGoTerm[index]: prob.item()
+                mapping[index]: prob.item()
                 for index, prob in enumerate(sample_probs)
                 if prob > top_p
             }
@@ -408,6 +401,20 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
             results.append((subgraph, dict(probabilities)))
 
         return results
+
+    @torch.inference_mode()
+    def predict_mf_subgraphs(
+        self, x: Tensor, top_p: float = 0.5
+    ) -> list[tuple[DiGraph, dict[str, float]]]:
+        """Predicts a subgraph of the MF aspect of the GO based on the input sequence tokens."""
+
+        assert self.graph is not None, "Gene Ontology graph is not loaded."
+
+        subgraphs = self._build_subgraphs(
+            self.predict_mf(x), self.indexToMfGoTerm, top_p
+        )
+
+        return subgraphs
 
     @torch.inference_mode()
     def predict_bp_subgraphs(
@@ -417,38 +424,11 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        bp_prob = self.predict_bp(x)
+        subgraphs = self._build_subgraphs(
+            self.predict_bp(x), self.indexToBpGoTerm, top_p
+        )
 
-        batch_size = bp_prob.shape[0]
-
-        results = []
-
-        for i in range(batch_size):
-            sample_probs = bp_prob[i]
-
-            child_nodes = {
-                self.indexToBpGoTerm[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-
-            probabilities = defaultdict(float, child_nodes)
-
-            # Fix up the predictions by leveraging the GO DAG hierarchy.
-            for go_id, child_probability in child_nodes.items():
-                for descendant in descendants(self.graph, go_id):
-                    parent_probability = probabilities[descendant]
-
-                    probabilities[descendant] = max(
-                        parent_probability,
-                        child_probability,
-                    )
-
-            subgraph = self.graph.subgraph(probabilities.keys())
-
-            results.append((subgraph, dict(probabilities)))
-
-        return results
+        return subgraphs
 
     @torch.inference_mode()
     def predict_cc_subgraphs(
@@ -458,38 +438,11 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        cc_prob = self.predict_cc(x)
+        subgraphs = self._build_subgraphs(
+            self.predict_cc(x), self.indexToCcGoTerm, top_p
+        )
 
-        batch_size = cc_prob.shape[0]
-
-        results = []
-
-        for i in range(batch_size):
-            sample_probs = cc_prob[i]
-
-            child_nodes = {
-                self.indexToCcGoTerm[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-
-            probabilities = defaultdict(float, child_nodes)
-
-            # Fix up the predictions by leveraging the GO DAG hierarchy.
-            for go_id, child_probability in child_nodes.items():
-                for descendant in descendants(self.graph, go_id):
-                    parent_probability = probabilities[descendant]
-
-                    probabilities[descendant] = max(
-                        parent_probability,
-                        child_probability,
-                    )
-
-            subgraph = self.graph.subgraph(probabilities.keys())
-
-            results.append((subgraph, dict(probabilities)))
-
-        return results
+        return subgraphs
 
     @torch.inference_mode()
     def predict_all_subgraphs(
@@ -501,45 +454,24 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
-        batch_size = mf_prob.shape[0]
-
         aspects = [
             (self.indexToMfGoTerm, mf_prob),
             (self.indexToBpGoTerm, bp_prob),
             (self.indexToCcGoTerm, cc_prob),
         ]
 
+        batch_size = mf_prob.shape[0]
+
         results = []
 
         for i in range(batch_size):
-            subgraphs = []
-            terms = []
+            aspect_results = [
+                self._build_subgraphs(probs[i].unsqueeze(0), mapping, top_p)[0]
+                for mapping, probs in aspects
+            ]
 
-            for mapping, probs in aspects:
-                sample_probs = probs[i]
-
-                child_nodes = {
-                    mapping[index]: prob.item()
-                    for index, prob in enumerate(sample_probs)
-                    if prob > top_p
-                }
-
-                probabilities = defaultdict(float, child_nodes)
-
-                # Fix up the predictions by leveraging the GO DAG hierarchy.
-                for go_id, child_probability in child_nodes.items():
-                    for descendant in descendants(self.graph, go_id):
-                        parent_probability = probabilities[descendant]
-
-                        probabilities[descendant] = max(
-                            parent_probability,
-                            child_probability,
-                        )
-
-                subgraph = self.graph.subgraph(probabilities.keys())
-
-                subgraphs.append(subgraph)
-                terms.append(dict(probabilities))
+            subgraphs = [subgraph for subgraph, _ in aspect_results]
+            terms = [term for _, term in aspect_results]
 
             results.append((subgraphs, terms))
 
