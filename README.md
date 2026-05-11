@@ -6,7 +6,7 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 - **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
 
-- **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) subgraph ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
+- **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
 
 - **Efficient inference at scale** — Supports weight quantization and quantization-aware training (QAT), enabling memory-efficient, high-throughput screening of large sequence datasets without meaningful accuracy loss.
 
@@ -33,7 +33,7 @@ The following pretrained models are available on HuggingFace Hub.
 First, install the `esmc_function_classifier` package using [pip](https://pypi.org/project/pip/).
 
 ```sh
-pip install esmc_function_classifier
+pip install esmc-protein-function
 ```
 
 Then, we'll load the model weights from HuggingFace Hub, tokenize the amino acid sequence, and infer the GO terms.
@@ -43,10 +43,10 @@ import torch
 
 from esm.tokenization import EsmSequenceTokenizer
 
-from esmc_function_classifier.model import ESMCProteinFunction
+from esmc_protein_function.model import ESMCProteinFunction
 
 
-model_name = "andrewdalpino/ESMC-300M-Protein-Function"
+model_name = "andrewdalpino/ESMC-Protein-Function-V1-300M"
 
 sequence = "MPPKGHKKTADGDFRPVNSAGNTIQAKQKYSIDDLLYPKSTIKNLAKETLPDDAIISKDALTAIQRAATLFVSYMASHGNASAEAGGRKKIT"
 
