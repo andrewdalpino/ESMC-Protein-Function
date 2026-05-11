@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--top_p", default=0.5, type=float)
     parser.add_argument("--quantize_weights", action="store_true")
     parser.add_argument("--quant_group_size", default=192, type=int)
-    parser.add_argument("--device", default="cuda", type=str)
+    parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--seed", default=None, type=int)
 
     args = parser.parse_args()
@@ -105,29 +105,34 @@ def main():
 
         input_ids = torch.tensor(out["input_ids"], dtype=torch.int64).to(args.device)
 
-        subgraph, go_term_probabilities = model.predict_subgraph(
-            input_ids, top_p=args.top_p
-        )
+        input_ids = input_ids.unsqueeze(0)
 
-        color_intensities = [
-            go_term_probabilities[go_term] for go_term in subgraph.nodes()
-        ]
+        results = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
 
-        node_labels = {
-            go_term: f"{go_term}\n{data["name"]}"
-            for go_term, data in subgraph.nodes(data=True)
-        }
+        subgraphs, go_term_probabilities = results[0]
 
-        plt.figure(figsize=(12, 10))
-        plt.title("Gene Ontology Subgraphs")
+        titles = ["Molecular Function", "Biological Process", "Cellular Component"]
 
-        plot_subgraph(
-            subgraph,
-            node_color=color_intensities,
-            labels=node_labels,
-        )
+        for title, (subgraph, probabilities) in zip(
+            titles, zip(subgraphs, go_term_probabilities)
+        ):
+            color_intensities = [probabilities[go_term] for go_term in subgraph.nodes()]
 
-        plt.show()
+            node_labels = {
+                go_term: f"{go_term}\n{data["name"]}"
+                for go_term, data in subgraph.nodes(data=True)
+            }
+
+            plt.figure(figsize=(12, 10))
+            plt.title(f"{title}")
+
+            plot_subgraph(
+                subgraph,
+                node_color=color_intensities,
+                labels=node_labels,
+            )
+
+            plt.show()
 
         if "y" not in input("Go again? (yes|no): ").lower():
             break

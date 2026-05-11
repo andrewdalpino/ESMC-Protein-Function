@@ -1,4 +1,3 @@
-from copy import copy
 from functools import partial
 from collections import defaultdict
 
@@ -283,9 +282,63 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return z_mf, z_bp, z_cc
 
+    def predict_mf_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
+        """Predicts MF GO terms based on the input sequence tokens."""
+
+        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+
+        z_prob = self.predict_mf(x)
+
+        results = [
+            {
+                self.indexToMfGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+            for sample_probs in z_prob
+        ]
+
+        return results
+
+    def predict_bp_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
+        """Predicts BP GO terms based on the input sequence tokens."""
+
+        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+
+        z_prob = self.predict_bp(x)
+
+        results = [
+            {
+                self.indexToBpGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+            for sample_probs in z_prob
+        ]
+
+        return results  
+
+    def predict_cc_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
+        """Predicts CC GO terms based on the input sequence tokens."""
+
+        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+
+        z_prob = self.predict_cc(x)
+
+        results = [
+            {
+                self.indexToCcGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+            for sample_probs in z_prob
+        ]
+
+        return results
+
     def predict_all_terms(
         self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[dict[str, float], ...]:
+    ) -> list[tuple[dict[str, float], ...]]:
         """Predicts GO terms based on the input sequence tokens."""
 
         assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
@@ -298,50 +351,74 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
             (self.indexToCcGoTerm, cc_prob),
         ]
 
-        for mapping, probabilities in aspects:
-            probabilities = {
-                mapping[index]: probability
-                for index, probability in enumerate(copy(probabilities))
-                if probability > top_p
-            }
+        batch_size = mf_prob.shape[0]
 
-        return mf_prob, bp_prob, cc_prob
+        results = [
+            tuple(
+                {
+                    mapping[index]: prob.item()
+                    for index, prob in enumerate(probs[i])
+                    if prob > top_p
+                }
+                for mapping, probs in aspects
+            )
+            for i in range(batch_size)
+        ]
 
-    def predict_all_subgraph(
+        return results
+
+    def predict_all_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[DiGraph, ...]:
+    ) -> list[tuple[list[DiGraph], list[dict[str, float]]]]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        mf_prob, bp_prob, cc_prob = self.predict_all_terms(x, top_p)
+        mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
-        mf_subgraph, bp_subgraph, cc_subgraph = None, None, None
+        batch_size = mf_prob.shape[0]
 
         aspects = [
-            (mf_prob, mf_subgraph),
-            (bp_prob, bp_subgraph),
-            (cc_prob, cc_subgraph),
+            (self.indexToMfGoTerm, mf_prob),
+            (self.indexToBpGoTerm, bp_prob),
+            (self.indexToCcGoTerm, cc_prob),
         ]
 
-        for probabilities, subgraph in aspects:
-            child_nodes = copy(probabilities)
+        results = []
 
-            probabilities = defaultdict(float, probabilities)
+        for i in range(batch_size):
+            subgraphs = []
+            terms = []
 
-            # Fix up the predictions by leveraging the GO DAG hierarchy.
-            for go_id, child_probability in child_nodes.items():
-                for descendant in descendants(self.graph, go_id):
-                    parent_probability = probabilities[descendant]
+            for mapping, probs in aspects:
+                sample_probs = probs[i]  # shape (num_classes,)
 
-                    probabilities[descendant] = max(
-                        parent_probability,
-                        child_probability,
-                    )
+                child_nodes = {
+                    mapping[index]: prob.item()
+                    for index, prob in enumerate(sample_probs)
+                    if prob > top_p
+                }
 
-            subgraph = self.graph.subgraph(probabilities.keys())
+                probabilities = defaultdict(float, child_nodes)
 
-        return mf_subgraph, bp_subgraph, cc_subgraph
+                # Fix up the predictions by leveraging the GO DAG hierarchy.
+                for go_id, child_probability in child_nodes.items():
+                    for descendant in descendants(self.graph, go_id):
+                        parent_probability = probabilities[descendant]
+
+                        probabilities[descendant] = max(
+                            parent_probability,
+                            child_probability,
+                        )
+
+                subgraph = self.graph.subgraph(probabilities.keys())
+
+                subgraphs.append(subgraph)
+                terms.append(probabilities)
+
+            results.append((subgraphs, terms))
+
+        return results
 
 
 class MultiLabelClassifier(Module):
