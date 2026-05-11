@@ -245,7 +245,6 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
         """Predicts MF GO terms based on the input sequence tokens."""
 
         z = self.forward_mf(x)
-
         z = torch.sigmoid(z)
 
         return z
@@ -255,7 +254,6 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
         """Predicts BP GO terms based on the input sequence tokens."""
 
         z = self.forward_bp(x)
-
         z = torch.sigmoid(z)
 
         return z
@@ -265,7 +263,6 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
         """Predicts CC GO terms based on the input sequence tokens."""
 
         z = self.forward_cc(x)
-
         z = torch.sigmoid(z)
 
         return z
@@ -282,6 +279,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return z_mf, z_bp, z_cc
 
+    @torch.inference_mode()
     def predict_mf_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts MF GO terms based on the input sequence tokens."""
 
@@ -300,6 +298,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return results
 
+    @torch.inference_mode()
     def predict_bp_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts BP GO terms based on the input sequence tokens."""
 
@@ -316,8 +315,9 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
             for sample_probs in z_prob
         ]
 
-        return results  
+        return results
 
+    @torch.inference_mode()
     def predict_cc_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts CC GO terms based on the input sequence tokens."""
 
@@ -336,6 +336,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return results
 
+    @torch.inference_mode()
     def predict_all_terms(
         self, x: Tensor, top_p: float = 0.5
     ) -> list[tuple[dict[str, float], ...]]:
@@ -367,6 +368,130 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
 
         return results
 
+    @torch.inference_mode()
+    def predict_mf_subgraphs(
+        self, x: Tensor, top_p: float = 0.5
+    ) -> list[tuple[DiGraph, dict[str, float]]]:
+        """Predicts a subgraph of the MF aspect of the GO based on the input sequence tokens."""
+
+        assert self.graph is not None, "Gene Ontology graph is not loaded."
+
+        mf_prob = self.predict_mf(x)
+
+        batch_size = mf_prob.shape[0]
+
+        results = []
+
+        for i in range(batch_size):
+            sample_probs = mf_prob[i]
+
+            child_nodes = {
+                self.indexToMfGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+
+            probabilities = defaultdict(float, child_nodes)
+
+            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            for go_id, child_probability in child_nodes.items():
+                for descendant in descendants(self.graph, go_id):
+                    parent_probability = probabilities[descendant]
+
+                    probabilities[descendant] = max(
+                        parent_probability,
+                        child_probability,
+                    )
+
+            subgraph = self.graph.subgraph(probabilities.keys())
+
+            results.append((subgraph, dict(probabilities)))
+
+        return results
+
+    @torch.inference_mode()
+    def predict_bp_subgraphs(
+        self, x: Tensor, top_p: float = 0.5
+    ) -> list[tuple[DiGraph, dict[str, float]]]:
+        """Predicts a subgraph of the BP aspect of the GO based on the input sequence tokens."""
+
+        assert self.graph is not None, "Gene Ontology graph is not loaded."
+
+        bp_prob = self.predict_bp(x)
+
+        batch_size = bp_prob.shape[0]
+
+        results = []
+
+        for i in range(batch_size):
+            sample_probs = bp_prob[i]
+
+            child_nodes = {
+                self.indexToBpGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+
+            probabilities = defaultdict(float, child_nodes)
+
+            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            for go_id, child_probability in child_nodes.items():
+                for descendant in descendants(self.graph, go_id):
+                    parent_probability = probabilities[descendant]
+
+                    probabilities[descendant] = max(
+                        parent_probability,
+                        child_probability,
+                    )
+
+            subgraph = self.graph.subgraph(probabilities.keys())
+
+            results.append((subgraph, dict(probabilities)))
+
+        return results
+
+    @torch.inference_mode()
+    def predict_cc_subgraphs(
+        self, x: Tensor, top_p: float = 0.5
+    ) -> list[tuple[DiGraph, dict[str, float]]]:
+        """Predicts a subgraph of the CC aspect of the GO based on the input sequence tokens."""
+
+        assert self.graph is not None, "Gene Ontology graph is not loaded."
+
+        cc_prob = self.predict_cc(x)
+
+        batch_size = cc_prob.shape[0]
+
+        results = []
+
+        for i in range(batch_size):
+            sample_probs = cc_prob[i]
+
+            child_nodes = {
+                self.indexToCcGoTerm[index]: prob.item()
+                for index, prob in enumerate(sample_probs)
+                if prob > top_p
+            }
+
+            probabilities = defaultdict(float, child_nodes)
+
+            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            for go_id, child_probability in child_nodes.items():
+                for descendant in descendants(self.graph, go_id):
+                    parent_probability = probabilities[descendant]
+
+                    probabilities[descendant] = max(
+                        parent_probability,
+                        child_probability,
+                    )
+
+            subgraph = self.graph.subgraph(probabilities.keys())
+
+            results.append((subgraph, dict(probabilities)))
+
+        return results
+
+    @torch.inference_mode()
     def predict_all_subgraphs(
         self, x: Tensor, top_p: float = 0.5
     ) -> list[tuple[list[DiGraph], list[dict[str, float]]]]:
@@ -391,7 +516,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
             terms = []
 
             for mapping, probs in aspects:
-                sample_probs = probs[i]  # shape (num_classes,)
+                sample_probs = probs[i]
 
                 child_nodes = {
                     mapping[index]: prob.item()
@@ -414,7 +539,7 @@ class ESMCGeneOntology(Module, PyTorchModelHubMixin):
                 subgraph = self.graph.subgraph(probabilities.keys())
 
                 subgraphs.append(subgraph)
-                terms.append(probabilities)
+                terms.append(dict(probabilities))
 
             results.append((subgraphs, terms))
 
