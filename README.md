@@ -2,6 +2,14 @@
 
 An Evolutionary-scale Model (ESM) for protein function prediction from amino acid sequences using the Gene Ontology (GO). Based on the ESM Cambrian Transformer architecture, pre-trained on [UniRef](https://www.uniprot.org/help/uniref), [MGnify](https://www.ebi.ac.uk/metagenomics), and the Joint Genome Institute's database and fine-tuned on the [AmiGO Boost](https://huggingface.co/datasets/andrewdalpino/AmiGO-Boost) protein function dataset, this protein language model predicts the GO subgraph for a particular protein sequence - giving you insight into the molecular function, biological process, and location of the activity inside the cell.
 
+## Key Features
+
+- **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
+
+- **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) subgraph ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
+
+- **Efficient inference at scale** — Supports weight quantization and quantization-aware training (QAT), enabling memory-efficient, high-throughput screening of large sequence datasets without meaningful accuracy loss.
+
 ## What are GO terms?
 
 > "The Gene Ontology (GO) is a concept hierarchy that describes the biological function of genes and gene products at different levels of abstraction (Ashburner et al., 2000). It is a good model to describe the multi-faceted nature of protein function."
