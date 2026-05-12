@@ -284,27 +284,13 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         return z_mf, z_bp, z_cc
 
-    def _build_terms(
-        self, probs: Tensor, mapping: dict[int, str], top_p: float
-    ) -> list[dict[str, float]]:
-        terms = [
-            {
-                mapping[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-            for sample_probs in probs
-        ]
-
-        return terms
-
     @torch.inference_mode()
     def predict_mf_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts MF GO terms based on the input sequence tokens."""
 
-        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+        probabilities = self.predict_mf(x)
 
-        terms = self._build_terms(self.predict_mf(x), self.indexToMfGoTerm, top_p)
+        terms = self._build_terms(probabilities, self.indexToMfGoTerm, top_p)
 
         return terms
 
@@ -312,9 +298,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def predict_bp_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts BP GO terms based on the input sequence tokens."""
 
-        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+        probabilities = self.predict_bp(x)
 
-        terms = self._build_terms(self.predict_bp(x), self.indexToBpGoTerm, top_p)
+        terms = self._build_terms(probabilities, self.indexToBpGoTerm, top_p)
 
         return terms
 
@@ -322,19 +308,17 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def predict_cc_terms(self, x: Tensor, top_p: float = 0.5) -> list[dict[str, float]]:
         """Predicts CC GO terms based on the input sequence tokens."""
 
-        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+        probabilities = self.predict_cc(x)
 
-        terms = self._build_terms(self.predict_cc(x), self.indexToCcGoTerm, top_p)
+        terms = self._build_terms(probabilities, self.indexToCcGoTerm, top_p)
 
         return terms
 
     @torch.inference_mode()
     def predict_all_terms(
         self, x: Tensor, top_p: float = 0.5
-    ) -> list[tuple[dict[str, float], ...]]:
+    ) -> tuple[list[dict[str, float]], ...]:
         """Predicts GO terms based on the input sequence tokens."""
-
-        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
 
         mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
@@ -342,116 +326,115 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         bp_terms = self._build_terms(bp_prob, self.indexToBpGoTerm, top_p)
         cc_terms = self._build_terms(cc_prob, self.indexToCcGoTerm, top_p)
 
-        return list(zip(mf_terms, bp_terms, cc_terms))
-
-    def _build_subgraphs(
-        self, probs: Tensor, mapping: dict[int, str], top_p: float
-    ) -> list[tuple[DiGraph, dict[str, float]]]:
-        batch_size = probs.shape[0]
-
-        results = []
-
-        for i in range(batch_size):
-            sample_probs = probs[i]
-
-            child_nodes = {
-                mapping[index]: prob.item()
-                for index, prob in enumerate(sample_probs)
-                if prob > top_p
-            }
-
-            probabilities = defaultdict(float, child_nodes)
-
-            # Fix up the predictions by leveraging the GO DAG hierarchy.
-            for go_id, child_probability in child_nodes.items():
-                for descendant in descendants(self.graph, go_id):
-                    parent_probability = probabilities[descendant]
-
-                    probabilities[descendant] = max(
-                        parent_probability,
-                        child_probability,
-                    )
-
-            subgraph = self.graph.subgraph(probabilities.keys())
-
-            results.append((subgraph, dict(probabilities)))
-
-        return results
+        return mf_terms, bp_terms, cc_terms
 
     @torch.inference_mode()
     def predict_mf_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> list[tuple[DiGraph, dict[str, float]]]:
+    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
         """Predicts a subgraph of the MF aspect of the GO based on the input sequence tokens."""
 
-        assert self.graph is not None, "Gene Ontology graph is not loaded."
+        terms = self.predict_mf_terms(x, top_p)
 
-        subgraphs = self._build_subgraphs(
-            self.predict_mf(x), self.indexToMfGoTerm, top_p
-        )
+        subgraphs, probabilities = self._build_subgraphs(terms)
 
-        return subgraphs
+        return subgraphs, probabilities
 
     @torch.inference_mode()
     def predict_bp_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> list[tuple[DiGraph, dict[str, float]]]:
+    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
         """Predicts a subgraph of the BP aspect of the GO based on the input sequence tokens."""
 
-        assert self.graph is not None, "Gene Ontology graph is not loaded."
+        terms = self.predict_bp_terms(x, top_p)
 
-        subgraphs = self._build_subgraphs(
-            self.predict_bp(x), self.indexToBpGoTerm, top_p
-        )
+        subgraphs, probabilities = self._build_subgraphs(terms)
 
-        return subgraphs
+        return subgraphs, probabilities
 
     @torch.inference_mode()
     def predict_cc_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> list[tuple[DiGraph, dict[str, float]]]:
+    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
         """Predicts a subgraph of the CC aspect of the GO based on the input sequence tokens."""
 
-        assert self.graph is not None, "Gene Ontology graph is not loaded."
+        terms = self.predict_cc_terms(x, top_p)
 
-        subgraphs = self._build_subgraphs(
-            self.predict_cc(x), self.indexToCcGoTerm, top_p
-        )
+        subgraphs, probabilities = self._build_subgraphs(terms)
 
-        return subgraphs
+        return subgraphs, probabilities
 
     @torch.inference_mode()
     def predict_all_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> list[tuple[list[DiGraph], list[dict[str, float]]]]:
+    ) -> tuple[tuple[list[DiGraph], list[dict[str, float]]], ...]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
-        assert self.graph is not None, "Gene Ontology graph is not loaded."
-
-        mf_prob, bp_prob, cc_prob = self.predict_all(x)
-
-        aspects = [
-            (self.indexToMfGoTerm, mf_prob),
-            (self.indexToBpGoTerm, bp_prob),
-            (self.indexToCcGoTerm, cc_prob),
-        ]
-
-        batch_size = mf_prob.shape[0]
+        aspects = self.predict_all_terms(x, top_p)
 
         results = []
 
-        for i in range(batch_size):
-            aspect_results = [
-                self._build_subgraphs(probs[i].unsqueeze(0), mapping, top_p)[0]
-                for mapping, probs in aspects
-            ]
+        for terms in aspects:
+            subgraphs, probabilities = self._build_subgraphs(terms)
 
-            subgraphs = [subgraph for subgraph, _ in aspect_results]
-            terms = [term for _, term in aspect_results]
+            results.append((subgraphs, probabilities))
 
-            results.append((subgraphs, terms))
+        return tuple(results)
 
-        return results
+    def _build_terms(
+        self, probs: Tensor, mapping: dict[int, str], top_p: float
+    ) -> list[dict[str, float]]:
+        """
+        Adds GO terms to the output based on the predicted probabilities and a specified threshold.
+        """
+
+        assert 0 < top_p <= 1, "top_p must be in the range (0, 1]."
+
+        terms = []
+
+        for sample_probs in probs:
+            terms.append(
+                {
+                    mapping[index]: prob.item()
+                    for index, prob in enumerate(sample_probs)
+                    if prob > top_p
+                }
+            )
+
+        return terms
+
+    def _build_subgraphs(
+        self, terms: list[dict[str, float]]
+    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
+        """
+        Builds subgraphs of the GO DAG based on the predicted probabilities.
+        """
+
+        assert self.graph is not None, "Gene Ontology graph is not loaded."
+
+        subgraphs, probabilities = [], []
+
+        for sample_terms in terms:
+            term_probabilities = defaultdict(float, sample_terms)
+
+            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            for go_id, child_probability in sample_terms.items():
+                for descendant in descendants(self.graph, go_id):
+                    parent_probability = term_probabilities[descendant]
+
+                    term_probabilities[descendant] = max(
+                        parent_probability,
+                        child_probability,
+                    )
+
+            term_probabilities = dict(term_probabilities)
+
+            subgraph = self.graph.subgraph(term_probabilities.keys())
+
+            subgraphs.append(subgraph)
+            probabilities.append(term_probabilities)
+
+        return subgraphs, probabilities
 
 
 class MultiLabelClassifier(Module):

@@ -53,7 +53,7 @@ def main():
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_length_buckets", default=30, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
-    parser.add_argument("--num_epochs", default=100, type=int)
+    parser.add_argument("--num_epochs", default=200, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
     parser.add_argument("--num_attention_pool_heads", default=4, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)

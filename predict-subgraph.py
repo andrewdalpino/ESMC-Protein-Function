@@ -107,15 +107,15 @@ def main():
 
         input_ids = input_ids.unsqueeze(0)
 
-        results = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
-
-        subgraphs, go_term_probabilities = results[0]
+        aspect_results = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
 
         titles = ["Molecular Function", "Biological Process", "Cellular Component"]
 
-        for title, (subgraph, probabilities) in zip(
-            titles, zip(subgraphs, go_term_probabilities)
-        ):
+        for title, (subgraphs, probabilities) in zip(titles, aspect_results):
+            # Grab the first results in the batch.
+            subgraph = subgraphs[0]
+            probabilities = probabilities[0]
+
             color_intensities = [probabilities[go_term] for go_term in subgraph.nodes()]
 
             node_labels = {

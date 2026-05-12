@@ -8,7 +8,7 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 - **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
 
-- **Efficient inference at scale** — Supports weight quantization and quantization-aware training (QAT), enabling memory-efficient, high-throughput screening of large sequence datasets without meaningful accuracy loss.
+- **Efficient inference at scale** — Supports weight quantization and quantization-aware training (QAT), enabling memory-efficient, high-throughput screening of large sequence datasets without accuracy loss.
 
 ## What are GO terms?
 
