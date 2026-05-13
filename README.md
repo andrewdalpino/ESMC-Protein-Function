@@ -4,7 +4,7 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 ## Key Features
 
-- **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
+- **Sequence-to-function** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
 
 - **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
 
@@ -13,30 +13,37 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 ## What are GO terms?
 
 > "The Gene Ontology (GO) is a concept hierarchy that describes the biological function of genes and gene products at different levels of abstraction (Ashburner et al., 2000). It is a good model to describe the multi-faceted nature of protein function."
+>
 > "GO is a directed acyclic graph. The nodes in this graph are functional descriptors (terms or classes) connected by relational ties between them (is_a, part_of, etc.). For example, terms 'protein binding activity' and 'binding activity' are related by an is_a relationship; however, the edge in the graph is often reversed to point from binding towards protein binding. This graph contains three subgraphs (subontologies): Molecular Function (MF), Biological Process (BP), and Cellular Component (CC), defined by their root nodes. Biologically, each subgraph represent a different aspect of the protein's function: what it does on a molecular level (MF), which biological processes it participates in (BP) and where in the cell it is located (CC)."
 
 From [CAFA 5 Protein Function Prediction](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction/data)
 
-## Pretrained Models
+## V1 Pretrained Models
 
-The following pretrained models are available on HuggingFace Hub.
+The following pretrained models are available on HuggingFace Hub and require the `esmc-protein-function` library version `1.x.x` for inference.
 
-| Name | Embedding Dim. | Attn. Heads | Encoder Layers | Context Length | QAT | Total Parameters |
+Coming soon ...
+
+## V0 Pretrained Models
+
+The following pretrained models are available on HuggingFace Hub and require the `esmc_function_classifier` library version `0.1.x` for inference.
+
+| Name | Embedding Dimensions | Encoder Layers | Context Length | Total Parameters |
 | --- | --- | --- | --- | --- | --- | --- |
-| [andrewdalpino/ESMC-300M-Protein-Function](https://huggingface.co/andrewdalpino/ESMC-300M-Protein-Function) | 960 | 15 | 30 | 2048 | None | 361M |
-| [andrewdalpino/ESMC-300M-QAT-Protein-Function](https://huggingface.co/andrewdalpino/ESMC-300M-QAT-Protein-Function) | 960 | 15 | 30 | 2048 | Int8W | 361M |
-| [andrewdalpino/ESMC-600M-Protein-Function](https://huggingface.co/andrewdalpino/ESMC-600M-Protein-Function) | 1152 | 18 | 36 | 2048 | None  | 644M |
-| [andrewdalpino/ESMC-600M-QAT-Protein-Function](https://huggingface.co/andrewdalpino/ESMC-600M-QAT-Protein-Function) | 1152 | 18 | 36 | 2048 | Int8W | 644M |
+| [andrewdalpino/ESMC-Protein-Function-V0-300M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-300M) | 960 | 30 | 2048 | 361M |
+| [andrewdalpino/ESMC-Protein-Function-V0-300M-QAT](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-300M-QAT) | 960 | 30 | 2048 | 361M |
+| [andrewdalpino/ESMC-Protein-Function-V0-600M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-600M) | 1152 | 36 | 2048 | 644M |
+| [andrewdalpino/ESMC-Protein-Function-V0-600M-QAT](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-600M-QAT) | 1152 | 36 | 2048 | 644M |
 
 ## Basic Pretrained Example
 
-First, install the `esmc_function_classifier` package using [pip](https://pypi.org/project/pip/).
+First, install the `esmc-protein-function` package using [pip](https://pypi.org/project/pip/).
 
 ```sh
 pip install esmc-protein-function
 ```
 
-Then, we'll load the model weights from HuggingFace Hub, tokenize the amino acid sequence, and infer the GO terms.
+Then, we'll load the model weights from HuggingFace Hub by calling the `from_pretrained()` method. We'll also need the ESM tokenizer from the `esm` library. Then, tokenize the sequence and query the model like in the example below.
 
 ```python
 import torch
@@ -58,7 +65,7 @@ model = ESMCProteinFunction.from_pretrained(model_name)
 
 out = tokenizer(sequence, max_length=2048, truncation=True)
 
-input_ids = torch.tensor(out["input_ids"], dtype=torch.int64)
+input_ids = torch.tensor(out["input_ids"], dtype=torch.int32)
 
 go_term_probabilities = model.predict_terms(
     input_ids, top_p=top_p
@@ -73,6 +80,8 @@ You can also output the gene-ontology (GO) `networkx` subgraph for a given seque
 pip install obonet
 ```
 
+Then, load the GO DAG and call the `predict_all_subgraphs()` method like in the example below.
+
 ```python
 import networkx as nx
 
@@ -86,7 +95,7 @@ graph = obonet.read_obo(go_db_path)
 
 model.load_gene_ontology(graph)
 
-subgraph, go_term_probabilities = model.predict_subgraph(
+subgraph, go_term_probabilities = model.predict_all_subgraphs(
     input_ids, top_p=top_p
 )
 

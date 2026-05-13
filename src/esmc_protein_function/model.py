@@ -51,10 +51,12 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def from_esm_pretrained(
         cls,
         model_name: str,
-        num_pool_heads: int,
-        indexToMfGoTerm: dict[int, str],
-        indexToBpGoTerm: dict[int, str],
-        indexToCcGoTerm: dict[int, str],
+        num_mf_pool_heads: int,
+        num_bp_pool_heads: int,
+        num_cc_pool_heads: int,
+        index_to_mf_term: dict[int, str],
+        index_to_bp_term: dict[int, str],
+        index_to_cc_term: dict[int, str],
         use_flash_attention: bool,
     ) -> "ESMCProteinFunction":
         """
@@ -73,10 +75,12 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
             embedding_dimensions=model_args["embedding_dimensions"],
             num_heads=model_args["num_heads"],
             num_encoder_layers=model_args["num_encoder_layers"],
-            num_pool_heads=num_pool_heads,
-            indexToMfGoTerm=indexToMfGoTerm,
-            indexToBpGoTerm=indexToBpGoTerm,
-            indexToCcGoTerm=indexToCcGoTerm,
+            num_mf_pool_heads=num_mf_pool_heads,
+            num_bp_pool_heads=num_bp_pool_heads,
+            num_cc_pool_heads=num_cc_pool_heads,
+            index_to_mf_term=index_to_mf_term,
+            index_to_bp_term=index_to_bp_term,
+            index_to_cc_term=index_to_cc_term,
             use_flash_attention=use_flash_attention,
         )
 
@@ -98,13 +102,19 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         embedding_dimensions: int,
         num_heads: int,
         num_encoder_layers: int,
-        num_pool_heads: int,
-        indexToMfGoTerm: dict[int, str],
-        indexToBpGoTerm: dict[int, str],
-        indexToCcGoTerm: dict[int, str],
+        num_mf_pool_heads: int,
+        num_bp_pool_heads: int,
+        num_cc_pool_heads: int,
+        index_to_mf_term: dict[int, str],
+        index_to_bp_term: dict[int, str],
+        index_to_cc_term: dict[int, str],
         use_flash_attention: bool,
     ) -> None:
         super().__init__()
+
+        assert index_to_bp_term, "index_to_bp_term must be non-empty."
+        assert index_to_mf_term, "index_to_mf_term must be non-empty."
+        assert index_to_cc_term, "index_to_cc_term must be non-empty."
 
         tokenizer = EsmSequenceTokenizer()
 
@@ -119,31 +129,35 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         # Remove pretrained sequence head from the encoder.
         encoder.sequence_head = Identity()
 
-        num_mf_classes = len(indexToMfGoTerm)
-        num_bp_classes = len(indexToBpGoTerm)
-        num_cc_classes = len(indexToCcGoTerm)
+        num_mf_classes = len(index_to_mf_term)
+        num_bp_classes = len(index_to_bp_term)
+        num_cc_classes = len(index_to_cc_term)
 
         self.encoder = encoder
 
         new_classifier = partial(
             MultiLabelClassifier,
             embedding_dimensions=embedding_dimensions,
-            num_heads=num_pool_heads,
         )
 
-        self.mf_head = new_classifier(num_classes=num_mf_classes)
-        self.bp_head = new_classifier(num_classes=num_bp_classes)
-        self.cc_head = new_classifier(num_classes=num_cc_classes)
+        self.mf_head = new_classifier(
+            num_classes=num_mf_classes, num_heads=num_mf_pool_heads
+        )
 
-        self.indexToMfGoTerm = indexToMfGoTerm
-        self.indexToBpGoTerm = indexToBpGoTerm
-        self.indexToCcGoTerm = indexToCcGoTerm
+        self.bp_head = new_classifier(
+            num_classes=num_bp_classes, num_heads=num_bp_pool_heads
+        )
 
-        self.embedding_dimensions = embedding_dimensions
-        self.pad_token = tokenizer.pad_token_id
+        self.cc_head = new_classifier(
+            num_classes=num_cc_classes, num_heads=num_cc_pool_heads
+        )
 
         self.graph: DiGraph | None = None
 
+        self.index_to_mf_term = index_to_mf_term
+        self.index_to_bp_term = index_to_bp_term
+        self.index_to_cc_term = index_to_cc_term
+        self.embedding_dimensions = embedding_dimensions
         self.tokenizer = tokenizer
 
     @property
@@ -290,7 +304,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         probabilities = self.predict_mf(x)
 
-        terms = self._build_terms(probabilities, self.indexToMfGoTerm, top_p)
+        terms = self._match_terms(probabilities, self.index_to_mf_term, top_p)
 
         return terms
 
@@ -300,7 +314,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         probabilities = self.predict_bp(x)
 
-        terms = self._build_terms(probabilities, self.indexToBpGoTerm, top_p)
+        terms = self._match_terms(probabilities, self.index_to_bp_term, top_p)
 
         return terms
 
@@ -310,7 +324,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         probabilities = self.predict_cc(x)
 
-        terms = self._build_terms(probabilities, self.indexToCcGoTerm, top_p)
+        terms = self._match_terms(probabilities, self.index_to_cc_term, top_p)
 
         return terms
 
@@ -322,9 +336,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         mf_prob, bp_prob, cc_prob = self.predict_all(x)
 
-        mf_terms = self._build_terms(mf_prob, self.indexToMfGoTerm, top_p)
-        bp_terms = self._build_terms(bp_prob, self.indexToBpGoTerm, top_p)
-        cc_terms = self._build_terms(cc_prob, self.indexToCcGoTerm, top_p)
+        mf_terms = self._match_terms(mf_prob, self.index_to_mf_term, top_p)
+        bp_terms = self._match_terms(bp_prob, self.index_to_bp_term, top_p)
+        cc_terms = self._match_terms(cc_prob, self.index_to_cc_term, top_p)
 
         return mf_terms, bp_terms, cc_terms
 
@@ -336,9 +350,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         terms = self.predict_mf_terms(x, top_p)
 
-        subgraphs, probabilities = self._build_subgraphs(terms)
+        subgraphs, terms = self._build_subgraphs(terms)
 
-        return subgraphs, probabilities
+        return subgraphs, terms
 
     @torch.inference_mode()
     def predict_bp_subgraphs(
@@ -348,9 +362,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         terms = self.predict_bp_terms(x, top_p)
 
-        subgraphs, probabilities = self._build_subgraphs(terms)
+        subgraphs, terms = self._build_subgraphs(terms)
 
-        return subgraphs, probabilities
+        return subgraphs, terms
 
     @torch.inference_mode()
     def predict_cc_subgraphs(
@@ -360,9 +374,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         terms = self.predict_cc_terms(x, top_p)
 
-        subgraphs, probabilities = self._build_subgraphs(terms)
+        subgraphs, terms = self._build_subgraphs(terms)
 
-        return subgraphs, probabilities
+        return subgraphs, terms
 
     @torch.inference_mode()
     def predict_all_subgraphs(
@@ -375,13 +389,13 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         results = []
 
         for terms in aspects:
-            subgraphs, probabilities = self._build_subgraphs(terms)
+            subgraphs, terms = self._build_subgraphs(terms)
 
-            results.append((subgraphs, probabilities))
+            results.append((subgraphs, terms))
 
         return tuple(results)
 
-    def _build_terms(
+    def _match_terms(
         self, probs: Tensor, mapping: dict[int, str], top_p: float
     ) -> list[dict[str, float]]:
         """

@@ -5,7 +5,7 @@ from torch import Tensor
 from torch.nn import Module, Parameter
 
 
-class AdaptiveLossWeighting(Module):
+class AdaptiveAspectWeighting(Module):
     """
     Adaptively weighting the loss of each aspect (MF, BP, CC) in the Gene Ontology prediction task.
     """
@@ -24,33 +24,35 @@ class AdaptiveLossWeighting(Module):
         self.min_weight = min_weight
 
     @property
-    def aspect_weights(self) -> Tensor:
+    def weights(self) -> list[float]:
         """
         Get current loss weights based on learned uncertainties.
 
         Returns:
-            Tensor of loss weights for each task.
+            List of loss weights for each task.
         """
 
         weights = torch.exp(-2.0 * self.log_sigmas)
 
         weights = weights.clamp(min=self.min_weight)
 
+        weights = weights.detach().tolist()
+
         return weights
 
-    def forward(self, loss: Tensor, aspect: str):
+    def forward(self, loss: Tensor, aspect: str) -> Tensor:
         assert (
             aspect in self.aspect_mapping
         ), f"Invalid aspect '{aspect}' given, must be one of {set(self.aspect_mapping.keys())}."
 
         index = self.aspect_mapping[aspect]
 
-        log_sigma2 = self.log_sigmas[index]
+        log_sigma = self.log_sigmas[index]
 
-        weight = torch.exp(-2.0 * log_sigma2)
+        weight = torch.exp(-2.0 * log_sigma)
 
         weight = weight.clamp(min=self.min_weight)
 
-        loss = 0.5 * weight * loss
+        loss = 0.5 * weight * loss + log_sigma
 
         return loss

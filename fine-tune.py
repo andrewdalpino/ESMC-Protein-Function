@@ -23,7 +23,7 @@ import obonet
 
 from src.esmc_protein_function.model import ESMCProteinFunction
 from data import AmiGOBoost, LengthBucketBatchSampler, SortedLengthBatchSampler
-from loss import AdaptiveLossWeighting
+from loss import AdaptiveAspectWeighting
 
 from tqdm import tqdm
 
@@ -40,6 +40,7 @@ def main():
         default="esmc_300m",
         choices=AVAILABLE_BASE_MODELS,
     )
+
     parser.add_argument("--num_dataset_processes", default=1, type=int)
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--min_sequence_length", default=1, type=int)
@@ -51,17 +52,21 @@ def main():
     parser.add_argument("--aspect_learning_rate", default=1e-3, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
-    parser.add_argument("--num_length_buckets", default=30, type=int)
+    parser.add_argument("--num_length_buckets", default=50, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=200, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
-    parser.add_argument("--num_attention_pool_heads", default=4, type=int)
+    parser.add_argument("--num_mf_pool_heads", default=8, type=int)
+    parser.add_argument("--num_bp_pool_heads", default=16, type=int)
+    parser.add_argument("--num_cc_pool_heads", default=8, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
     parser.add_argument("--eval_interval", default=5, type=int)
     parser.add_argument("--checkpoint_interval", default=5, type=int)
+
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
+
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--run_dir_path", default="./runs", type=str)
     parser.add_argument("--device", default="cpu", type=str)
@@ -165,10 +170,12 @@ def main():
 
     model_args = {
         "model_name": args.base_model,
-        "num_pool_heads": args.num_attention_pool_heads,
-        "indexToMfGoTerm": mf_train.label_indices_to_go_ids,
-        "indexToBpGoTerm": bp_train.label_indices_to_go_ids,
-        "indexToCcGoTerm": cc_train.label_indices_to_go_ids,
+        "num_mf_pool_heads": args.num_mf_pool_heads,
+        "num_bp_pool_heads": args.num_bp_pool_heads,
+        "num_cc_pool_heads": args.num_cc_pool_heads,
+        "index_to_mf_term": mf_train.label_indices_to_go_ids,
+        "index_to_bp_term": bp_train.label_indices_to_go_ids,
+        "index_to_cc_term": cc_train.label_indices_to_go_ids,
         "use_flash_attention": args.use_flash_attention,
     }
 
@@ -188,11 +195,11 @@ def main():
 
     loss_function = BCEWithLogitsLoss()
 
-    loss_weight = AdaptiveLossWeighting({"MF", "BP", "CC"}, 0.1).to(args.device)
+    aspect_weight = AdaptiveAspectWeighting({"MF", "BP", "CC"}, 0.1).to(args.device)
 
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
 
-    aspect_optimizer = SGD(loss_weight.parameters(), lr=args.aspect_learning_rate)
+    aspect_optimizer = SGD(aspect_weight.parameters(), lr=args.aspect_learning_rate)
 
     f1_metric = F1Score().to(args.device)
 
@@ -206,7 +213,7 @@ def main():
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
 
-        loss_weight.load_state_dict(checkpoint["loss_weight"])
+        aspect_weight.load_state_dict(checkpoint["aspect_weight"])
         aspect_optimizer.load_state_dict(checkpoint["aspect_optimizer"])
 
         starting_epoch += checkpoint["epoch"]
@@ -255,19 +262,20 @@ def main():
             with amp_context:
                 y_pred = forward(x)
 
-                loss = loss_function.forward(y_pred, y)
-                loss = loss_weight.forward(loss, aspect)
+                bce_loss = loss_function.forward(y_pred, y)
 
-                scaled_loss = loss / args.gradient_accumulation_steps
+                weighted_loss = aspect_weight.forward(bce_loss, aspect)
+
+                scaled_loss = weighted_loss / args.gradient_accumulation_steps
 
             scaled_loss.backward()
 
-            total_cross_entropy += loss.item()
+            total_cross_entropy += bce_loss.item()
             total_batches += 1
 
             if step % args.gradient_accumulation_steps == 0:
                 norm = clip_grad_norm_(model.parameters(), args.max_gradient_norm)
-                _ = clip_grad_norm_(loss_weight.parameters(), args.max_gradient_norm)
+                _ = clip_grad_norm_(aspect_weight.parameters(), args.max_gradient_norm)
 
                 optimizer.step()
                 aspect_optimizer.step()
@@ -287,13 +295,13 @@ def main():
         average_cross_entropy = total_cross_entropy / total_batches
         average_gradient_norm = total_gradient_norm / total_steps
 
-        loss_weights = loss_weight.aspect_weights.detach().cpu().numpy()
+        mf_weight, bp_weight, cc_weight = aspect_weight.weights
 
         logger.add_scalar("Cross Entropy", average_cross_entropy, epoch)
         logger.add_scalar("Gradient Norm", average_gradient_norm, epoch)
-        logger.add_scalar("MF Weight", loss_weights[0], epoch)
-        logger.add_scalar("BP Weight", loss_weights[1], epoch)
-        logger.add_scalar("CC Weight", loss_weights[2], epoch)
+        logger.add_scalar("MF Weight", mf_weight, epoch)
+        logger.add_scalar("BP Weight", bp_weight, epoch)
+        logger.add_scalar("CC Weight", cc_weight, epoch)
 
         print(
             f"Epoch {epoch}:",
@@ -335,7 +343,7 @@ def main():
                 "model_args": model_args,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
-                "loss_weight": loss_weight.state_dict(),
+                "aspect_weight": aspect_weight.state_dict(),
                 "aspect_optimizer": aspect_optimizer.state_dict(),
             }
 
