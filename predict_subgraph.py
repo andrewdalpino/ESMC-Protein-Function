@@ -1,5 +1,4 @@
 import random
-from functools import partial
 
 from argparse import ArgumentParser
 
@@ -14,10 +13,133 @@ import obonet
 
 import networkx as nx
 
-import matplotlib
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.io as pio
 
-matplotlib.use("qt5agg")
+from plotly.subplots import make_subplots
+
+
+def build_aspect_figure(subgraph, probabilities, title, seed: int = 42):
+    pos = nx.spring_layout(subgraph, seed=seed)
+
+    edge_x = []
+    edge_y = []
+
+    for u, v in subgraph.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x,
+        y=edge_y,
+        mode="lines",
+        line=dict(width=0.5, color="#888"),
+        hoverinfo="none",
+        showlegend=False,
+    )
+
+    node_x = []
+    node_y = []
+    node_text = []
+    node_hovertext = []
+    node_color = []
+
+    for go_term in subgraph.nodes():
+        x, y = pos[go_term]
+
+        node_x.append(x)
+        node_y.append(y)
+
+        name = subgraph.nodes[go_term].get("name", "")
+
+        node_text.append(name)
+
+        prob = probabilities.get(go_term, 0.0)
+
+        node_color.append(prob)
+
+        node_hovertext.append(
+            f"GO: {go_term}<br>Name: {name}<br>Probability: {prob:.4f}"
+        )
+
+    node_trace = go.Scatter(
+        x=node_x,
+        y=node_y,
+        mode="markers+text",
+        text=node_text,
+        hovertext=node_hovertext,
+        hoverinfo="text",
+        showlegend=False,
+        marker=dict(
+            size=20,
+            color=node_color,
+            colorscale="PiYG",
+            cmin=0,
+            cmax=1,
+            showscale=True,
+            colorbar=dict(title="Probability", thickness=15, len=0.5),
+        ),
+        textposition="middle center",
+        textfont=dict(size=9),
+    )
+
+    fig = go.Figure(data=[edge_trace, node_trace])
+
+    fig.update_layout(
+        title=title,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        width=900,
+        height=600,
+        hovermode="closest",
+        margin=dict(l=20, r=20, t=60, b=20),
+    )
+
+    return fig
+
+
+def build_combined_figure(aspect_results, titles):
+    figs = []
+
+    for (subgraphs, probabilities), title in zip(aspect_results, titles):
+        subgraph = subgraphs[0]
+        probabilities = probabilities[0]
+
+        fig = build_aspect_figure(subgraph, probabilities, title)
+
+        figs.append(fig)
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        subplot_titles=titles,
+        vertical_spacing=0.08,
+    )
+
+    for i, f in enumerate(figs):
+        for trace in f.data:
+            fig.add_trace(trace, row=i + 1, col=1)
+
+        fig.update_xaxes(
+            showgrid=False, zeroline=False, showticklabels=False, row=i + 1, col=1
+        )
+
+        fig.update_yaxes(
+            showgrid=False, zeroline=False, showticklabels=False, row=i + 1, col=1
+        )
+
+    fig.update_layout(
+        height=1900,
+        width=950,
+        hovermode="closest",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+
+    return fig
 
 
 def main():
@@ -28,6 +150,7 @@ def main():
     parser.add_argument(
         "--checkpoint_path", default="./checkpoints/checkpoint.pt", type=str
     )
+
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--context_length", default=2048, type=int)
     parser.add_argument("--top_p", default=0.5, type=float)
@@ -83,16 +206,7 @@ def main():
 
     print("Gene ontology loaded successfully.")
 
-    plot_subgraph = partial(
-        nx.draw_networkx,
-        node_size=2000,
-        font_size=9,
-        cmap="PiYG",
-        vmin=0,
-        vmax=1,
-        with_labels=True,
-        arrowsize=20,
-    )
+    titles = ["Molecular Function", "Biological Process", "Cellular Component"]
 
     while True:
         sequence = input("Enter a sequence: ").replace(" ", "").replace("\n", "")
@@ -109,30 +223,9 @@ def main():
 
         aspect_results = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
 
-        titles = ["Molecular Function", "Biological Process", "Cellular Component"]
+        fig = build_combined_figure(aspect_results, titles)
 
-        for title, (subgraphs, probabilities) in zip(titles, aspect_results):
-            # Grab the first results in the batch.
-            subgraph = subgraphs[0]
-            probabilities = probabilities[0]
-
-            color_intensities = [probabilities[go_term] for go_term in subgraph.nodes()]
-
-            node_labels = {
-                go_term: f"{go_term}\n{data["name"]}"
-                for go_term, data in subgraph.nodes(data=True)
-            }
-
-            plt.figure(figsize=(12, 10))
-            plt.title(f"{title}")
-
-            plot_subgraph(
-                subgraph,
-                node_color=color_intensities,
-                labels=node_labels,
-            )
-
-            plt.show()
+        pio.show(fig)
 
         if "y" not in input("Go again? (yes|no): ").lower():
             break
