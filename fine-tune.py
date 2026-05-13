@@ -53,6 +53,9 @@ def main():
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_length_buckets", default=50, type=int)
+    parser.add_argument("--mf_aspect_ratio", default=0.33, type=float)
+    parser.add_argument("--bp_aspect_ratio", default=0.33, type=float)
+    parser.add_argument("--cc_aspect_ratio", default=0.33, type=float)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=200, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
@@ -228,6 +231,18 @@ def main():
         ("CC", model.forward_cc, iter(cc_train_loader)),
     ]
 
+    aspect_ratios = [
+        args.mf_aspect_ratio,
+        args.bp_aspect_ratio,
+        args.cc_aspect_ratio,
+    ]
+
+    total_weight = sum(aspect_ratios)
+
+    aspect_probs = [r / total_weight for r in aspect_ratios]
+
+    sample_aspect = lambda: random.choices(train_paths, aspect_probs, k=1)[0]
+
     test_paths = [
         ("MF", model.predict_mf, mf_test_loader),
         ("BP", model.predict_bp, bp_test_loader),
@@ -252,7 +267,7 @@ def main():
         aspect_optimizer.zero_grad()
 
         while step <= args.max_steps_per_epoch:
-            aspect, forward, dataloader = random.choice(train_paths)
+            aspect, forward, dataloader = sample_aspect()
 
             x, y = next(dataloader)
 
