@@ -1,10 +1,9 @@
-from functools import partial
 from collections import defaultdict
 
 import torch
 
 from torch import Tensor
-from torch.nn import Module, Identity, Linear, LayerNorm, Softmax, Flatten
+from torch.nn import Module, Identity, Linear, LayerNorm, Sequential, Softmax, Flatten
 
 from torchao.quantization import Int8WeightOnlyConfig, quantize_
 
@@ -54,6 +53,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         num_mf_pool_heads: int,
         num_bp_pool_heads: int,
         num_cc_pool_heads: int,
+        num_mf_layers: int,
+        num_bp_layers: int,
+        num_cc_layers: int,
         index_to_mf_term: dict[int, str],
         index_to_bp_term: dict[int, str],
         index_to_cc_term: dict[int, str],
@@ -66,10 +68,16 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         from esm.utils.constants.esm3 import data_root
 
-        if model_name not in cls.ESM_PRETRAINED_CONFIGS:
-            raise ValueError(f"Unknown model name: {model_name}")
-
         model_args = cls.ESM_PRETRAINED_CONFIGS.get(model_name)
+        checkpoint_path = cls.ESM_PRETRAINED_CHECKPOINT_PATHS.get(model_name)
+
+        assert (
+            model_args is not None
+        ), f"Model args not found for model name: {model_name}."
+
+        assert (
+            checkpoint_path is not None
+        ), f"Checkpoint path not found for model name: {model_name}."
 
         model = cls(
             embedding_dimensions=model_args["embedding_dimensions"],
@@ -78,13 +86,14 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
             num_mf_pool_heads=num_mf_pool_heads,
             num_bp_pool_heads=num_bp_pool_heads,
             num_cc_pool_heads=num_cc_pool_heads,
+            num_mf_layers=num_mf_layers,
+            num_bp_layers=num_bp_layers,
+            num_cc_layers=num_cc_layers,
             index_to_mf_term=index_to_mf_term,
             index_to_bp_term=index_to_bp_term,
             index_to_cc_term=index_to_cc_term,
             use_flash_attention=use_flash_attention,
         )
-
-        checkpoint_path = cls.ESM_PRETRAINED_CHECKPOINT_PATHS.get(model_name)
 
         # Compensate for irregular base model naming conventions.
         esm_model_name = model_name.replace("_", "-")
@@ -105,6 +114,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         num_mf_pool_heads: int,
         num_bp_pool_heads: int,
         num_cc_pool_heads: int,
+        num_mf_layers: int,
+        num_bp_layers: int,
+        num_cc_layers: int,
         index_to_mf_term: dict[int, str],
         index_to_bp_term: dict[int, str],
         index_to_cc_term: dict[int, str],
@@ -135,21 +147,16 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         self.encoder = encoder
 
-        new_classifier = partial(
-            MultiLabelClassifier,
-            embedding_dimensions=embedding_dimensions,
+        self.mf_head = GOTermClassifier(
+            embedding_dimensions, num_mf_pool_heads, num_mf_layers, num_mf_classes
         )
 
-        self.mf_head = new_classifier(
-            num_classes=num_mf_classes, num_heads=num_mf_pool_heads
+        self.bp_head = GOTermClassifier(
+            embedding_dimensions, num_bp_pool_heads, num_bp_layers, num_bp_classes
         )
 
-        self.bp_head = new_classifier(
-            num_classes=num_bp_classes, num_heads=num_bp_pool_heads
-        )
-
-        self.cc_head = new_classifier(
-            num_classes=num_cc_classes, num_heads=num_cc_pool_heads
+        self.cc_head = GOTermClassifier(
+            embedding_dimensions, num_cc_pool_heads, num_cc_layers, num_cc_classes
         )
 
         self.graph: DiGraph | None = None
@@ -232,12 +239,16 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def forward_mf(self, x: Tensor) -> Tensor:
         out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
+        assert out.embeddings is not None, "Missing encoder contextual embeddings."
+
         z = self.mf_head.forward(out.embeddings)
 
         return z
 
     def forward_bp(self, x: Tensor) -> Tensor:
         out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
+
+        assert out.embeddings is not None, "Missing encoder contextual embeddings."
 
         z = self.bp_head.forward(out.embeddings)
 
@@ -246,12 +257,16 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def forward_cc(self, x: Tensor) -> Tensor:
         out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
 
+        assert out.embeddings is not None, "Missing encoder contextual embeddings."
+
         z = self.cc_head.forward(out.embeddings)
 
         return z
 
     def forward_all(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         out: ESMCOutput = self.encoder.forward(sequence_tokens=x, sequence_id=None)
+
+        assert out.embeddings is not None, "Missing encoder contextual embeddings."
 
         z_mf = self.mf_head.forward(out.embeddings)
         z_bp = self.bp_head.forward(out.embeddings)
@@ -264,6 +279,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         """Predicts MF GO terms based on the input sequence tokens."""
 
         z = self.forward_mf(x)
+
         z = torch.sigmoid(z)
 
         return z
@@ -273,6 +289,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         """Predicts BP GO terms based on the input sequence tokens."""
 
         z = self.forward_bp(x)
+
         z = torch.sigmoid(z)
 
         return z
@@ -282,6 +299,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         """Predicts CC GO terms based on the input sequence tokens."""
 
         z = self.forward_cc(x)
+
         z = torch.sigmoid(z)
 
         return z
@@ -451,41 +469,35 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         return subgraphs, probabilities
 
 
-class MultiLabelClassifier(Module):
-    """A 2-layer multi-label binary classification head with SwiGLU activation."""
+class GOTermClassifier(Module):
+    """
+    A multi-label binary classification head for predicting GO terms from amino acid
+    sequence contextual embeddings.
+    """
 
-    def __init__(self, embedding_dimensions: int, num_heads: int, num_classes: int):
+    def __init__(
+        self,
+        embedding_dimensions: int,
+        num_heads: int,
+        num_layers: int,
+        num_classes: int,
+    ):
         super().__init__()
-
-        assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
-        assert num_classes > 0, "num_classes must be greater than 0."
 
         self.pool = AttentionPool(embedding_dimensions, num_heads)
 
-        self.linear1 = Linear(embedding_dimensions, 2 * embedding_dimensions)
-        self.linear2 = Linear(embedding_dimensions, num_classes, bias=False)
-
-        self.norm = LayerNorm(embedding_dimensions)
-
-        self.swiglu = SwiGLU()
+        self.mlp = MLPClassifier(embedding_dimensions, num_layers, num_classes)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.pool.forward(x)
-
-        z = self.linear1.forward(x)
-        z = self.swiglu.forward(z)
-
-        z = x + z
-
-        z = self.norm.forward(z)
-        z = self.linear2.forward(z)
+        z = self.pool.forward(x)
+        z = self.mlp.forward(z)
 
         return z
 
 
 class AttentionPool(Module):
     """
-    A pooling layer that combines token embeddings into a single vector representation
+    A pooling layer that combines contextual embeddings into a single vector representation
     using multi-headed attention.
     """
 
@@ -512,5 +524,65 @@ class AttentionPool(Module):
 
         z = self.flatten.forward(z)
         z = self.linear2.forward(z)
+
+        return z
+
+
+class MLPClassifier(Module):
+    """
+    A multi-layer perceptron (MLP) classification head.
+    """
+
+    def __init__(
+        self,
+        embedding_dimensions: int,
+        num_layers: int,
+        num_classes: int,
+    ):
+        super().__init__()
+
+        assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
+        assert num_layers > 0, "num_layers must be greater than 0."
+        assert num_classes > 0, "num_classes must be greater than 0."
+
+        self.layers = Sequential(
+            *[FeedForwardBlock(embedding_dimensions) for _ in range(num_layers)]
+        )
+
+        self.out = Linear(embedding_dimensions, num_classes, bias=False)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.layers.forward(x)
+
+        z = self.out.forward(z)
+
+        return z
+
+
+class FeedForwardBlock(Module):
+    """
+    A 2-layer feedforward block with a residual connection and SwiGLU activation.
+    """
+
+    def __init__(self, embedding_dimensions: int):
+        super().__init__()
+
+        assert embedding_dimensions > 0, "embedding_dimensions must be greater than 0."
+
+        hidden_dimensions = 2 * embedding_dimensions
+
+        self.linear = Linear(embedding_dimensions, hidden_dimensions)
+
+        self.swiglu = SwiGLU()
+
+        self.norm = LayerNorm(embedding_dimensions)
+
+    def forward(self, x: Tensor) -> Tensor:
+        z = self.linear.forward(x)
+        z = self.swiglu.forward(z)
+
+        z = x + z
+
+        z = self.norm.forward(z)
 
         return z

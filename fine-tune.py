@@ -29,6 +29,8 @@ from tqdm import tqdm
 
 AVAILABLE_BASE_MODELS = ESMCProteinFunction.ESM_PRETRAINED_CONFIGS.keys()
 
+ONE_THIRD = 1 / 3
+
 
 def main():
     parser = ArgumentParser(
@@ -46,23 +48,26 @@ def main():
     parser.add_argument("--min_sequence_length", default=1, type=int)
     parser.add_argument("--max_sequence_length", default=2048, type=int)
     parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
-    parser.add_argument("--quantization_aware_training", action="store_true")
-    parser.add_argument("--quant_group_size", default=64, type=int)
     parser.add_argument("--learning_rate", default=3e-4, type=float)
     parser.add_argument("--aspect_learning_rate", default=1e-3, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
     parser.add_argument("--batch_size", default=8, type=int)
-    parser.add_argument("--num_length_buckets", default=50, type=int)
-    parser.add_argument("--mf_aspect_ratio", default=0.33, type=float)
-    parser.add_argument("--bp_aspect_ratio", default=0.33, type=float)
-    parser.add_argument("--cc_aspect_ratio", default=0.33, type=float)
+    parser.add_argument("--num_length_buckets", default=100, type=int)
+    parser.add_argument("--mf_aspect_ratio", default=ONE_THIRD, type=float)
+    parser.add_argument("--bp_aspect_ratio", default=ONE_THIRD, type=float)
+    parser.add_argument("--cc_aspect_ratio", default=ONE_THIRD, type=float)
     parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--num_epochs", default=200, type=int)
     parser.add_argument("--max_steps_per_epoch", default=2048, type=int)
-    parser.add_argument("--num_mf_pool_heads", default=8, type=int)
-    parser.add_argument("--num_bp_pool_heads", default=16, type=int)
-    parser.add_argument("--num_cc_pool_heads", default=8, type=int)
+    parser.add_argument("--num_mf_pool_heads", default=4, type=int)
+    parser.add_argument("--num_bp_pool_heads", default=8, type=int)
+    parser.add_argument("--num_cc_pool_heads", default=4, type=int)
+    parser.add_argument("--num_mf_layers", default=1, type=int)
+    parser.add_argument("--num_bp_layers", default=2, type=int)
+    parser.add_argument("--num_cc_layers", default=1, type=int)
     parser.add_argument("--use_flash_attention", default=True, type=bool)
+    parser.add_argument("--quantization_aware_training", action="store_true")
+    parser.add_argument("--quant_group_size", default=64, type=int)
     parser.add_argument("--eval_interval", default=5, type=int)
     parser.add_argument("--checkpoint_interval", default=5, type=int)
 
@@ -176,6 +181,9 @@ def main():
         "num_mf_pool_heads": args.num_mf_pool_heads,
         "num_bp_pool_heads": args.num_bp_pool_heads,
         "num_cc_pool_heads": args.num_cc_pool_heads,
+        "num_mf_layers": args.num_mf_layers,
+        "num_bp_layers": args.num_bp_layers,
+        "num_cc_layers": args.num_cc_layers,
         "index_to_mf_term": mf_train.label_indices_to_go_ids,
         "index_to_bp_term": bp_train.label_indices_to_go_ids,
         "index_to_cc_term": cc_train.label_indices_to_go_ids,
