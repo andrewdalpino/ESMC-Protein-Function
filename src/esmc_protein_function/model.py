@@ -179,8 +179,8 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def num_trainable_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-    def freeze_base(self) -> None:
-        """Prevent the base model parameters from being updated during training."""
+    def freeze_encoder(self) -> None:
+        """Prevent the encoder parameters from being updated during training."""
 
         for module in self.encoder.modules():
             for param in module.parameters():

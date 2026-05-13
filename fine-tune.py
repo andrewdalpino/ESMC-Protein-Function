@@ -192,7 +192,7 @@ def main():
 
     model = ESMCProteinFunction.from_esm_pretrained(**model_args)
 
-    model.freeze_base()
+    model.freeze_encoder()
 
     model.unfreeze_last_k_encoder_layers(args.unfreeze_last_k_layers)
 

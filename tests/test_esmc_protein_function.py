@@ -99,13 +99,13 @@ class TestESMCProteinFunctionTraining(unittest.TestCase):
     def setUp(self):
         self.model = make_model()
 
-    def test_freeze_base_disables_gradients(self):
-        self.model.freeze_base()
+    def test_freeze_encoder_disables_gradients(self):
+        self.model.freeze_encoder()
         for param in self.model.encoder.parameters():
             self.assertFalse(param.requires_grad)
 
-    def test_freeze_base_preserves_head_gradients(self):
-        self.model.freeze_base()
+    def test_freeze_encoder_preserves_head_gradients(self):
+        self.model.freeze_encoder()
         for param in self.model.mf_head.parameters():
             self.assertTrue(param.requires_grad)
         for param in self.model.bp_head.parameters():
@@ -114,7 +114,7 @@ class TestESMCProteinFunctionTraining(unittest.TestCase):
             self.assertTrue(param.requires_grad)
 
     def test_unfreeze_last_k_encoder_layers(self):
-        self.model.freeze_base()
+        self.model.freeze_encoder()
         self.model.unfreeze_last_k_encoder_layers(1)
         for param in self.model.encoder.transformer.blocks[-1].parameters():
             self.assertTrue(param.requires_grad)
