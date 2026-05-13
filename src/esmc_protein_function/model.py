@@ -169,7 +169,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
     @property
     def num_encoder_layers(self) -> int:
-        return len(self.encoder.blocks)
+        return len(self.encoder.transformer.blocks)
 
     @property
     def num_params(self) -> int:

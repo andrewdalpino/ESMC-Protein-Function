@@ -4,7 +4,7 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 ## Key Features
 
-- **Sequence-to-function** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
+- **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
 
 - **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
 
