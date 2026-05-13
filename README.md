@@ -4,7 +4,7 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 ## Key Features
 
-- **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component terms directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
+- **Sequence-to-function prediction** — Predicts Molecular Function, Biological Process, and Cellular Component ontologies directly from raw amino acid sequences, eliminating the need for homology searches, structural data, or multiple sequence alignments.
 
 - **Hierarchy-aware GO subgraph reconstruction** — Outputs a full GO directed acyclic graph (DAG) ensuring predictions respect the ontology structure rather than treating each term as an independent binary label.
 
@@ -29,7 +29,7 @@ Coming soon ...
 The following pretrained models are available on HuggingFace Hub and require the `esmc_function_classifier` library version `0.1.x` for inference.
 
 | Name | Embedding Dimensions | Encoder Layers | Context Length | Total Parameters |
-| --- | --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | [andrewdalpino/ESMC-Protein-Function-V0-300M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-300M) | 960 | 30 | 2048 | 361M |
 | [andrewdalpino/ESMC-Protein-Function-V0-300M-QAT](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-300M-QAT) | 960 | 30 | 2048 | 361M |
 | [andrewdalpino/ESMC-Protein-Function-V0-600M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-600M) | 1152 | 36 | 2048 | 644M |
