@@ -20,9 +20,11 @@ From [CAFA 5 Protein Function Prediction](https://www.kaggle.com/competitions/ca
 
 ## V1 Pretrained Models
 
-The following pretrained models are available on HuggingFace Hub and require the `esmc-protein-function` library version `1.x.x` for inference.
+The following pretrained models are available on HuggingFace Hub and require the `esmc-protein-function` library version `1.x.x` for inference. All V1 models have been optimized with quantization-aware post-training.
 
-Coming soon ...
+| Name | Embedding Dimensions | Encoder Layers | Context Length | Total Parameters |
+| --- | --- | --- | --- | --- |
+| [andrewdalpino/ESMC-Protein-Function-V1-300M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V1-300M) | 960 | 30 | 2048 | 397M |
 
 ## V0 Pretrained Models
 
