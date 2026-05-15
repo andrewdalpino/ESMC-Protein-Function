@@ -18,6 +18,10 @@ An Evolutionary-scale Model (ESM) for protein function prediction from amino aci
 
 From [CAFA 5 Protein Function Prediction](https://www.kaggle.com/competitions/cafa-5-protein-function-prediction/data)
 
+## Code Repository
+
+The code repository can be found at [https://github.com/andrewdalpino/ESMC-Protein-Function](https://github.com/andrewdalpino/ESMC-Protein-Function).
+
 ## V1 Pretrained Models
 
 The following pretrained models are available on HuggingFace Hub and require the `esmc-protein-function` library version `1.x.x` for inference. All V1 models have been optimized with quantization-aware post-training.
