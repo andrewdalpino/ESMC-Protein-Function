@@ -14,7 +14,6 @@ import obonet
 import networkx as nx
 
 import plotly.graph_objects as go
-import plotly.io as pio
 
 from plotly.subplots import make_subplots
 
@@ -85,7 +84,7 @@ def build_aspect_figure(subgraph, probabilities, title):
         hoverinfo="text",
         showlegend=False,
         marker=dict(
-            size=40,
+            size=20,
             color=node_color,
             colorscale="PiYG",
             cmin=0,
@@ -94,7 +93,7 @@ def build_aspect_figure(subgraph, probabilities, title):
             colorbar=dict(title="Probability", thickness=15, len=0.5),
         ),
         textposition="bottom center",
-        textfont=dict(size=20, color="black"),
+        textfont=dict(size=14, color="black"),
     )
 
     fig = go.Figure(data=[edge_trace, node_trace])
