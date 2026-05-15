@@ -27,6 +27,7 @@ def _get_dag_layers(subgraph):
 
 def build_aspect_figure(subgraph, probabilities, title):
     layers = _get_dag_layers(subgraph)
+
     pos = nx.multipartite_layout(subgraph, subset_key=layers)
 
     for node in pos:
@@ -84,7 +85,7 @@ def build_aspect_figure(subgraph, probabilities, title):
         hoverinfo="text",
         showlegend=False,
         marker=dict(
-            size=20,
+            size=40,
             color=node_color,
             colorscale="PiYG",
             cmin=0,
@@ -92,8 +93,8 @@ def build_aspect_figure(subgraph, probabilities, title):
             showscale=True,
             colorbar=dict(title="Probability", thickness=15, len=0.5),
         ),
-        textposition="middle center",
-        textfont=dict(size=9),
+        textposition="bottom center",
+        textfont=dict(size=20, color="black"),
     )
 
     fig = go.Figure(data=[edge_trace, node_trace])
@@ -103,8 +104,6 @@ def build_aspect_figure(subgraph, probabilities, title):
         showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        width=1024,
-        height=768,
         hovermode="closest",
         margin=dict(l=20, r=20, t=60, b=20),
     )
@@ -127,7 +126,7 @@ def build_combined_figure(aspect_results, titles):
         rows=3,
         cols=1,
         subplot_titles=titles,
-        vertical_spacing=0.08,
+        vertical_spacing=0.02,
     )
 
     for i, f in enumerate(figs):
@@ -143,8 +142,6 @@ def build_combined_figure(aspect_results, titles):
         )
 
     fig.update_layout(
-        height=2304,
-        width=1200,
         hovermode="closest",
         margin=dict(l=20, r=20, t=40, b=20),
     )
@@ -235,7 +232,7 @@ def main():
 
         fig = build_combined_figure(aspect_results, titles)
 
-        pio.show(fig)
+        fig.show(config={"responsive": False})
 
         if "y" not in input("Go again? (yes|no): ").lower():
             break
