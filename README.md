@@ -74,7 +74,7 @@ go_term_probabilities = model.predict_terms(
 )
 ```
 
-### Predict GO Subgraph
+### Predict GO Subgraphs
 
 You can also output the gene-ontology (GO) `networkx` subgraph for a given sequence like in the example below. You'll need an up-to-date gene ontology database that you can import using the `obonet` package.
 
@@ -97,13 +97,11 @@ graph = obonet.read_obo(go_db_path)
 
 model.load_gene_ontology(graph)
 
-subgraph, go_term_probabilities = model.predict_all_subgraphs(
+subgraphs, go_term_probabilities = model.predict_all_subgraphs(
     input_ids, top_p=top_p
 )
 
-json = nx.node_link_data(subgraph)
-
-print(json)
+# Render the subgraphs ...
 ```
 
 ![Example GO Subgraphs](https://raw.githubusercontent.com/andrewdalpino/ESMC-Protein-Function/master/docs/images/example_subgraphs.png)
