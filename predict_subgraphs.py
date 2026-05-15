@@ -19,8 +19,18 @@ import plotly.io as pio
 from plotly.subplots import make_subplots
 
 
-def build_aspect_figure(subgraph, probabilities, title, seed: int = 42):
-    pos = nx.spring_layout(subgraph, seed=seed)
+def _get_dag_layers(subgraph):
+    generations = list(nx.topological_generations(subgraph))
+
+    return {i: list(gen) for i, gen in enumerate(generations)}
+
+
+def build_aspect_figure(subgraph, probabilities, title):
+    layers = _get_dag_layers(subgraph)
+    pos = nx.multipartite_layout(subgraph, subset_key=layers)
+
+    for node in pos:
+        pos[node] = (pos[node][0], -pos[node][1])
 
     edge_x = []
     edge_y = []
@@ -93,8 +103,8 @@ def build_aspect_figure(subgraph, probabilities, title, seed: int = 42):
         showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        width=900,
-        height=600,
+        width=1024,
+        height=768,
         hovermode="closest",
         margin=dict(l=20, r=20, t=60, b=20),
     )
@@ -133,8 +143,8 @@ def build_combined_figure(aspect_results, titles):
         )
 
     fig.update_layout(
-        height=1900,
-        width=950,
+        height=2304,
+        width=1200,
         hovermode="closest",
         margin=dict(l=20, r=20, t=40, b=20),
     )

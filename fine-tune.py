@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--go_db_path", default="./dataset/go-basic.obo", type=str)
     parser.add_argument("--min_sequence_length", default=1, type=int)
     parser.add_argument("--max_sequence_length", default=2048, type=int)
-    parser.add_argument("--unfreeze_last_k_layers", default=8, type=int)
+    parser.add_argument("--unfreeze_last_k_layers", default=10, type=int)
     parser.add_argument("--learning_rate", default=3e-4, type=float)
     parser.add_argument("--aspect_learning_rate", default=1e-3, type=float)
     parser.add_argument("--max_gradient_norm", default=1.0, type=float)
