@@ -106,7 +106,7 @@ json = nx.node_link_data(subgraph)
 print(json)
 ```
 
-![Example GO Subgraph](https://raw.githubusercontent.com/andrewdalpino/esm2-function-classifier/master/docs/images/Q0E9J9-mf.png)
+![Example GO Subgraphs](https://raw.githubusercontent.com/andrewdalpino/ESMC-Protein-Function/master/docs/images/example_subgraphs.png)
 
 ### Quantized Model
 
