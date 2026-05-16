@@ -43,7 +43,7 @@ The following pretrained models are available on HuggingFace Hub and require the
 
 ## Basic Pretrained Example
 
-First, install the `esmc-protein-function` package using [pip](https://pypi.org/project/pip/).
+First, install the `esmc-protein-function` package using [pip](https://pypi.org/project/pip/). I recommend using a virtual environment such as `venv` to keep dependencies compartmentalized.
 
 ```sh
 pip install esmc-protein-function
@@ -112,7 +112,7 @@ subgraphs, go_term_probabilities = model.predict_all_subgraphs(
 
 ### Quantized Model
 
-To quantize the model weights using int8 call the `quantize_weights()` method. Any model can be quantized, but we recommend one that has been quantization-aware trained (QAT) for the best performance. The `group_size` argument controls the granularity at which quantization scales are computed.
+To quantize the model weights using int8 call the `quantize_weights()` method. Any model can be quantized, but we recommend one that has been quantization-aware trained (QAT) for the best performance. The `group_size` argument controls the granularity at which quantization scales are computed. Choose a group size that can divide the embedding dimensions equally.
 
 ```python
 model.quantize_weights(group_size=64)
@@ -122,3 +122,4 @@ model.quantize_weights(group_size=64)
 
 >- T. Hayes, et al. Simulating 500 million years of evolution with a language model, 2024.
 >- M. Ashburner, et al. Gene Ontology: tool for the unification of biology, 2000.
+>- Z. Lin, et al. A Structured Self-attentive Sentence Embedding, ICLR 2017.
