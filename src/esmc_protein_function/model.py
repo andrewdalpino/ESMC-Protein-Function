@@ -128,6 +128,12 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         assert index_to_mf_term, "index_to_mf_term must be non-empty."
         assert index_to_cc_term, "index_to_cc_term must be non-empty."
 
+        # Compensate for poorly implemented HuggingFace from_pretrained() implementation that
+        # doesn't support integer keys in the config file.
+        for mapping in [index_to_bp_term, index_to_mf_term, index_to_cc_term]:
+            for index, term in mapping.items():
+                mapping[int(index)] = term
+
         tokenizer = EsmSequenceTokenizer()
 
         encoder = ESMC(
