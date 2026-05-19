@@ -221,7 +221,12 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
     def quantize_weights(self, group_size: int) -> None:
         """Quantize the weights of the model."""
 
-        assert group_size % self.embedding_dimensions == 0, "Invalid quant group size."
+        for module in self.modules():
+            if isinstance(module, Linear):
+                assert module.in_features % group_size == 0, (
+                    f"quant_group_size ({group_size}) must divide in_features ({module.in_features})"
+                    f" of layer {module}."
+                )
 
         config = Int8WeightOnlyConfig(group_size=group_size)
 
@@ -414,7 +419,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         return tuple(results)
 
     def _match_terms(
-        self, probs: Tensor, mapping: dict[int, str], top_p: float
+        self, probabilities: Tensor, mapping: dict[int, str], top_p: float
     ) -> list[dict[str, float]]:
         """
         Adds GO terms to the output based on the predicted probabilities and a specified threshold.
@@ -424,7 +429,7 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         terms = []
 
-        for sample_probs in probs:
+        for sample_probs in probabilities:
             terms.append(
                 {
                     mapping[index]: prob.item()
