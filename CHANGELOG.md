@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.0.3
+
+- Fix index to GO term remapping
+
 ## 1.0.2
 
 - Compensate for poorly implemented HuggingFace from_pretrained() implementation that doesn't support integer keys in the config file.

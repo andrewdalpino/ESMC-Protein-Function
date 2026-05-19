@@ -130,9 +130,15 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         # Compensate for poorly implemented HuggingFace from_pretrained() implementation that
         # doesn't support integer keys in the config file.
-        for mapping in [index_to_bp_term, index_to_mf_term, index_to_cc_term]:
-            for index, term in mapping.items():
-                mapping[int(index)] = term
+        index_to_bp_term = {
+            int(index): term for index, term in index_to_bp_term.items()
+        }
+        index_to_mf_term = {
+            int(index): term for index, term in index_to_mf_term.items()
+        }
+        index_to_cc_term = {
+            int(index): term for index, term in index_to_cc_term.items()
+        }
 
         tokenizer = EsmSequenceTokenizer()
 
