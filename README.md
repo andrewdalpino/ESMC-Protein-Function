@@ -136,6 +136,8 @@ cc_subgraphs, cc_terms = cc_results
 # Render the subgraphs ...
 ```
 
+See the `predict_subgraphs.py` file in the repository for an example of how to render the GO DAGs using [Plotly](https://plotly.com/).
+
 ![Example GO Subgraphs](https://raw.githubusercontent.com/andrewdalpino/ESMC-Protein-Function/master/docs/images/example_subgraphs.png)
 
 You can also ouput the subgraphs for individual apsects of the GO using the `predict_mf_subgraphs()`, `predict_bp_subgraphs()`, and `predict_cc_subgraphs()` methods like in the example below.
