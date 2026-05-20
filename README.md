@@ -1,5 +1,7 @@
 # ESMC Protein Function Predictor
 
+![ESMC Protein Function Banner](https://raw.githubusercontent.com/andrewdalpino/ESMC-Protein-Function/master/docs/images/esmc-protein-function-banner.png)
+
 An Evolutionary-scale Model (ESM) for protein function prediction from amino acid sequences using the Gene Ontology (GO). Based on the ESM Cambrian Transformer architecture, pre-trained on [UniRef](https://www.uniprot.org/help/uniref), [MGnify](https://www.ebi.ac.uk/metagenomics), and the Joint Genome Institute's database and fine-tuned on the [AmiGO Boost](https://huggingface.co/datasets/andrewdalpino/AmiGO-Boost) protein function dataset, this protein language model predicts the GO subgraph for a particular protein sequence - giving you insight into the molecular function, biological process, and location of the activity inside the cell.
 
 ## Key Features
