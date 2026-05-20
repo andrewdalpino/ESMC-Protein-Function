@@ -44,7 +44,7 @@ The following pretrained models are available on HuggingFace Hub and require the
 | [andrewdalpino/ESMC-Protein-Function-V0-600M](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-600M) | 1152 | 36 | 2048 | 644M |
 | [andrewdalpino/ESMC-Protein-Function-V0-600M-QAT](https://huggingface.co/andrewdalpino/ESMC-Protein-Function-V0-600M-QAT) | 1152 | 36 | 2048 | 644M |
 
-## Basic Pretrained Example
+## Examples
 
 First, install the `esmc-protein-function` package using [pip](https://pypi.org/project/pip/). I recommend using a virtual environment such as `venv` to keep dependencies compartmentalized.
 
@@ -52,11 +52,9 @@ First, install the `esmc-protein-function` package using [pip](https://pypi.org/
 pip install esmc-protein-function
 ```
 
-Then, we'll load the model weights from HuggingFace Hub by calling the `from_pretrained()` method. We'll also need the ESM tokenizer from the `esm` library. Then, tokenize the sequence and query the model like in the example below.
+Then, we'll load the model weights from HuggingFace Hub by calling the `from_pretrained()` method. We'll also need the ESM tokenizer from the `esm` library.
 
 ```python
-import torch
-
 from esm.tokenization import EsmSequenceTokenizer
 
 from esmc_protein_function.model import ESMCProteinFunction
@@ -64,13 +62,21 @@ from esmc_protein_function.model import ESMCProteinFunction
 
 model_name = "andrewdalpino/ESMC-Protein-Function-V1-300M"
 
-sequence = "MPPKGHKKTADGDFRPVNSAGNTIQAKQKYSIDDLLYPKSTIKNLAKETLPDDAIISKDALTAIQRAATLFVSYMASHGNASAEAGGRKKIT"
-
-top_p = 0.5
-
 tokenizer = EsmSequenceTokenizer()
 
 model = ESMCProteinFunction.from_pretrained(model_name)
+```
+
+### Predict GO Terms
+
+In this example we'll predict the GO terms for all apsects of a protein sequence.
+
+```python
+import torch
+
+sequence = "MPPKGHKKTADGDFRPVNSAGNTIQAKQKYSIDDLLYPKSTIKNLAKETLPDDAIISKDALTAIQRAATLFVSYMASHGNASAEAGGRKKIT"
+
+top_p = 0.5
 
 out = tokenizer(sequence, max_length=2048, truncation=True)
 
@@ -86,7 +92,13 @@ print(bp_terms[0])
 print(cc_terms[0])
 ```
 
-### Predict GO Subgraphs
+You can also query individual apsects of the GO using the `predict_mf_terms()`, `predict_bp_terms()`, and `predict_cc_terms()` methods like in the example below.
+
+```python
+terms = model.predict_mf_terms(x, top_p=top_p)
+```
+
+### Predict All GO Subgraphs
 
 You can also output the gene-ontology (GO) `networkx` subgraph for a given sequence like in the example below. You'll need an up-to-date gene ontology database that you can import using the `obonet` package.
 
@@ -119,6 +131,12 @@ cc_subgraphs, cc_terms = cc_results
 ```
 
 ![Example GO Subgraphs](https://raw.githubusercontent.com/andrewdalpino/ESMC-Protein-Function/master/docs/images/example_subgraphs.png)
+
+You can also ouput the subgraphs for individual apsects of the GO using the `predict_mf_subgraphs()`, `predict_bp_subgraphs()`, and `predict_cc_subgraphs()` methods like in the example below.
+
+```python
+subgraphs, terms = model.predict_mf_subgraphs(x, top_p=top_p)
+```
 
 ### Quantized Model
 
