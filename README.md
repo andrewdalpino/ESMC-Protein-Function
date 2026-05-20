@@ -46,25 +46,29 @@ The following pretrained models are available on HuggingFace Hub and require the
 
 ## Examples
 
+### Install Library
+
 First, install the `esmc-protein-function` package using [pip](https://pypi.org/project/pip/). I recommend using a virtual environment such as `venv` to keep dependencies compartmentalized.
 
 ```sh
 pip install esmc-protein-function
 ```
 
+### Load Model Weights
+
 Then, we'll load the model weights from HuggingFace Hub by calling the `from_pretrained()` method. We'll also need the ESM tokenizer from the `esm` library.
 
 ```python
-from esm.tokenization import EsmSequenceTokenizer
-
 from esmc_protein_function.model import ESMCProteinFunction
+
+from esm.tokenization import EsmSequenceTokenizer
 
 
 model_name = "andrewdalpino/ESMC-Protein-Function-V1-300M"
 
-tokenizer = EsmSequenceTokenizer()
-
 model = ESMCProteinFunction.from_pretrained(model_name)
+
+tokenizer = EsmSequenceTokenizer()
 ```
 
 ### Predict GO Terms
@@ -72,8 +76,6 @@ model = ESMCProteinFunction.from_pretrained(model_name)
 In this example we'll predict the GO terms for all apsects of a protein sequence.
 
 ```python
-import torch
-
 sequence = "MPPKGHKKTADGDFRPVNSAGNTIQAKQKYSIDDLLYPKSTIKNLAKETLPDDAIISKDALTAIQRAATLFVSYMASHGNASAEAGGRKKIT"
 
 top_p = 0.5
@@ -95,12 +97,16 @@ print(cc_terms[0])
 You can also query individual apsects of the GO using the `predict_mf_terms()`, `predict_bp_terms()`, and `predict_cc_terms()` methods like in the example below.
 
 ```python
-terms = model.predict_mf_terms(x, top_p=top_p)
+mf_terms = model.predict_mf_terms(x, top_p=top_p)
+
+bp_terms = model.predict_bp_terms(x, top_p=top_p)
+
+cc_terms = model.predict_cc_terms(x, top_p=top_p)
 ```
 
-### Predict All GO Subgraphs
+### Predict GO Subgraphs
 
-You can also output the gene-ontology (GO) `networkx` subgraph for a given sequence like in the example below. You'll need an up-to-date gene ontology database that you can import using the `obonet` package.
+You can also output the gene-ontology (GO) `networkx` subgraph for a given sequence. You'll need an up-to-date gene ontology database that you can import using the `obonet` package.
 
 ```sh
 pip install obonet
@@ -135,14 +141,25 @@ cc_subgraphs, cc_terms = cc_results
 You can also ouput the subgraphs for individual apsects of the GO using the `predict_mf_subgraphs()`, `predict_bp_subgraphs()`, and `predict_cc_subgraphs()` methods like in the example below.
 
 ```python
-subgraphs, terms = model.predict_mf_subgraphs(x, top_p=top_p)
+mf_subgraphs, mf_terms = model.predict_mf_subgraphs(x, top_p=top_p)
+
+bp_subgraphs, bp_terms = model.predict_bp_subgraphs(x, top_p=top_p)
+
+cc_subgraphs, cc_terms = model.predict_cc_subgraphs(x, top_p=top_p)
 ```
 
-### Quantized Model
+### Optimize Model Weights
 
-To quantize the model weights using int8 call the `quantize_weights()` method. Any model can be quantized, but we recommend one that has been quantization-aware trained (QAT) for the best performance. The `group_size` argument controls the granularity at which quantization scales are computed. Choose a group size that can divide the embedding dimensions equally.
+For faster inference and lower memory usage you can cast the weights of the model to a lower bitdepth than the default float32.
 
 ```python
+import torch
+
+
+# Cast weights to float16.
+model = model.to(dtype=torch.float16)
+
+# Or quantize the weights to Int8.
 model.quantize_weights(group_size=64)
 ```
 
