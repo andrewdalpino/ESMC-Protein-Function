@@ -74,11 +74,16 @@ model = ESMCProteinFunction.from_pretrained(model_name)
 
 out = tokenizer(sequence, max_length=2048, truncation=True)
 
-input_ids = torch.tensor(out["input_ids"], dtype=torch.int32)
+x = torch.tensor(out["input_ids"], dtype=torch.int32)
 
-go_term_probabilities = model.predict_terms(
-    input_ids, top_p=top_p
-)
+# Add a batch dimension to a single sequence.
+x = x.squeeze(0)
+
+mf_terms, bp_terms, cc_terms = model.predict_all_terms(x, top_p=top_p)
+
+print(mf_terms[0])
+print(bp_terms[0])
+print(cc_terms[0])
 ```
 
 ### Predict GO Subgraphs
@@ -104,9 +109,11 @@ graph = obonet.read_obo(go_db_path)
 
 model.load_gene_ontology(graph)
 
-subgraphs, go_term_probabilities = model.predict_all_subgraphs(
-    input_ids, top_p=top_p
-)
+mf_results, bp_results, cc_results = model.predict_all_subgraphs(x, top_p=top_p)
+
+mf_subgraphs, mf_terms = mf_results
+bp_subgraphs, bp_terms = bp_results
+cc_subgraphs, cc_terms = cc_results
 
 # Render the subgraphs ...
 ```
