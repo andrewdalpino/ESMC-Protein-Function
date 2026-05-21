@@ -85,7 +85,7 @@ out = tokenizer(sequence, max_length=2048, truncation=True)
 x = torch.tensor(out["input_ids"], dtype=torch.int32)
 
 # Add a batch dimension to a single sequence.
-x = x.squeeze(0)
+x = x.unsqueeze(0)
 
 mf_terms, bp_terms, cc_terms = model.predict_all_terms(x, top_p=top_p)
 
