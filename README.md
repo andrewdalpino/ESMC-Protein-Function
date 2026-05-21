@@ -1,4 +1,4 @@
-# ESMC Protein Function Predictor
+# ESMC Protein Function
 
 ![ESMC Protein Function Banner](https://github.com/andrewdalpino/ESMC-Protein-Function/blob/master/docs/images/esmc-protein-funciton-banner.png?raw=true)
 
