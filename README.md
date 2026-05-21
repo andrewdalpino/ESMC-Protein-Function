@@ -99,7 +99,7 @@ tokenizer = EsmSequenceTokenizer()
 
 ### Predict GO Terms
 
-In this example we'll predict the GO terms for all apsects of a protein sequence.
+In this example we'll predict the Gene Ontology terms for all apsects of a protein sequence. The return values are dicts with GO terms as keys and predicted probabilities as values.
 
 ```python
 sequence = "MPPKGHKKTADGDFRPVNSAGNTIQAKQKYSIDDLLYPKSTIKNLAKETLPDDAIISKDALTAIQRAATLFVSYMASHGNASAEAGGRKKIT"
@@ -110,7 +110,7 @@ out = tokenizer(sequence, max_length=2048, truncation=True)
 
 x = torch.tensor(out["input_ids"], dtype=torch.int32)
 
-# Add a batch dimension to a single sequence.
+# Add the batch dimension for a single sequence.
 x = x.unsqueeze(0)
 
 x = x.to(device)
@@ -122,7 +122,7 @@ print(bp_terms[0])
 print(cc_terms[0])
 ```
 
-You can also query individual apsects of the GO using the `predict_mf_terms()`, `predict_bp_terms()`, and `predict_cc_terms()` methods like in the example below.
+You can also query individual apsects of the Gene Ontology using the `predict_mf_terms()`, `predict_bp_terms()`, and `predict_cc_terms()` methods like in the example below.
 
 ```python
 mf_terms = model.predict_mf_terms(x, top_p=top_p)
@@ -132,7 +132,7 @@ cc_terms = model.predict_cc_terms(x, top_p=top_p)
 
 ### Predict GO Subgraphs
 
-You can also output the gene-ontology (GO) `networkx` subgraph for a given sequence. You'll need an up-to-date gene ontology database that you can import using the `obonet` package.
+You can also output the GO `networkx` subgraph for a given sequence. You'll need an up-to-date Gene Ontology database that you can import using the `obonet` package. The database can be downloaded at [https://geneontology.org/docs/download-ontology/](geneontology.org/docs/download-ontology/).
 
 ```sh
 pip install obonet
@@ -146,7 +146,6 @@ import networkx as nx
 import obonet
 
 
-# Visit https://geneontology.org/docs/download-ontology/ to download.
 go_db_path = "./dataset/go-basic.obo"
 
 graph = obonet.read_obo(go_db_path)
