@@ -61,12 +61,38 @@ Then, we'll load the model weights from HuggingFace Hub by calling the `from_pre
 ```python
 from esmc_protein_function.model import ESMCProteinFunction
 
-from esm.tokenization import EsmSequenceTokenizer
-
 
 model_name = "andrewdalpino/ESMC-Protein-Function-V1-300M"
 
+device = "cpu"  # Can be "cpu", "cuda", "mps", etc.
+
 model = ESMCProteinFunction.from_pretrained(model_name)
+
+model = model.to(device)
+```
+
+### Optimize Model Weights
+
+For faster inference and lower memory usage you can cast the weights of the model to a lower bitdepth than the default float32.
+
+```python
+import torch
+
+
+# Cast weights to float16.
+model = model.to(dtype=torch.float16)
+
+# Or quantize the weights to Int8.
+model.quantize_weights(group_size=64)
+```
+
+### Instantiate ESM Tokenizer
+
+We'll also need the ESM tokenizer from the `esm` library to tokenize the amino acid sequences.
+
+```python
+from esm.tokenization import EsmSequenceTokenizer
+
 
 tokenizer = EsmSequenceTokenizer()
 ```
@@ -87,6 +113,8 @@ x = torch.tensor(out["input_ids"], dtype=torch.int32)
 # Add a batch dimension to a single sequence.
 x = x.unsqueeze(0)
 
+x = x.to(device)
+
 mf_terms, bp_terms, cc_terms = model.predict_all_terms(x, top_p=top_p)
 
 print(mf_terms[0])
@@ -98,9 +126,7 @@ You can also query individual apsects of the GO using the `predict_mf_terms()`, 
 
 ```python
 mf_terms = model.predict_mf_terms(x, top_p=top_p)
-
 bp_terms = model.predict_bp_terms(x, top_p=top_p)
-
 cc_terms = model.predict_cc_terms(x, top_p=top_p)
 ```
 
@@ -144,25 +170,8 @@ You can also ouput the subgraphs for individual apsects of the GO using the `pre
 
 ```python
 mf_subgraphs, mf_terms = model.predict_mf_subgraphs(x, top_p=top_p)
-
 bp_subgraphs, bp_terms = model.predict_bp_subgraphs(x, top_p=top_p)
-
 cc_subgraphs, cc_terms = model.predict_cc_subgraphs(x, top_p=top_p)
-```
-
-### Optimize Model Weights
-
-For faster inference and lower memory usage you can cast the weights of the model to a lower bitdepth than the default float32.
-
-```python
-import torch
-
-
-# Cast weights to float16.
-model = model.to(dtype=torch.float16)
-
-# Or quantize the weights to Int8.
-model.quantize_weights(group_size=64)
 ```
 
 ## References
