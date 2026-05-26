@@ -98,9 +98,7 @@ You can also query individual apsects of the GO using the `predict_mf_terms()`, 
 
 ```python
 mf_terms = model.predict_mf_terms(x, top_p=top_p)
-
 bp_terms = model.predict_bp_terms(x, top_p=top_p)
-
 cc_terms = model.predict_cc_terms(x, top_p=top_p)
 ```
 
@@ -127,11 +125,7 @@ graph = obonet.read_obo(go_db_path)
 
 model.load_gene_ontology(graph)
 
-mf_results, bp_results, cc_results = model.predict_all_subgraphs(x, top_p=top_p)
-
-mf_subgraphs, mf_terms = mf_results
-bp_subgraphs, bp_terms = bp_results
-cc_subgraphs, cc_terms = cc_results
+mf_subgraphs, bp_subgraphs, cc_subgraphs = model.predict_all_subgraphs(x, top_p=top_p)
 
 # Render the subgraphs ...
 ```
@@ -143,11 +137,9 @@ See the `predict_subgraphs.py` file in the repository for an example of how to r
 You can also ouput the subgraphs for individual apsects of the GO using the `predict_mf_subgraphs()`, `predict_bp_subgraphs()`, and `predict_cc_subgraphs()` methods like in the example below.
 
 ```python
-mf_subgraphs, mf_terms = model.predict_mf_subgraphs(x, top_p=top_p)
-
-bp_subgraphs, bp_terms = model.predict_bp_subgraphs(x, top_p=top_p)
-
-cc_subgraphs, cc_terms = model.predict_cc_subgraphs(x, top_p=top_p)
+mf_subgraphs = model.predict_mf_subgraphs(x, top_p=top_p)
+bp_subgraphs = model.predict_bp_subgraphs(x, top_p=top_p)
+cc_subgraphs = model.predict_cc_subgraphs(x, top_p=top_p)
 ```
 
 ### Optimize Model Weights

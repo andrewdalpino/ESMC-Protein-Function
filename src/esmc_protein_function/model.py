@@ -380,45 +380,39 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         return mf_terms, bp_terms, cc_terms
 
     @torch.inference_mode()
-    def predict_mf_subgraphs(
-        self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
+    def predict_mf_subgraphs(self, x: Tensor, top_p: float = 0.5) -> list[DiGraph]:
         """Predicts a subgraph of the MF aspect of the GO based on the input sequence tokens."""
 
         terms = self.predict_mf_terms(x, top_p)
 
-        subgraphs, terms = self._build_subgraphs(terms)
+        subgraphs = self._build_subgraphs(terms)
 
-        return subgraphs, terms
+        return subgraphs
 
     @torch.inference_mode()
-    def predict_bp_subgraphs(
-        self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
+    def predict_bp_subgraphs(self, x: Tensor, top_p: float = 0.5) -> list[DiGraph]:
         """Predicts a subgraph of the BP aspect of the GO based on the input sequence tokens."""
 
         terms = self.predict_bp_terms(x, top_p)
 
-        subgraphs, terms = self._build_subgraphs(terms)
+        subgraphs = self._build_subgraphs(terms)
 
-        return subgraphs, terms
+        return subgraphs
 
     @torch.inference_mode()
-    def predict_cc_subgraphs(
-        self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
+    def predict_cc_subgraphs(self, x: Tensor, top_p: float = 0.5) -> list[DiGraph]:
         """Predicts a subgraph of the CC aspect of the GO based on the input sequence tokens."""
 
         terms = self.predict_cc_terms(x, top_p)
 
-        subgraphs, terms = self._build_subgraphs(terms)
+        subgraphs = self._build_subgraphs(terms)
 
-        return subgraphs, terms
+        return subgraphs
 
     @torch.inference_mode()
     def predict_all_subgraphs(
         self, x: Tensor, top_p: float = 0.5
-    ) -> tuple[tuple[list[DiGraph], list[dict[str, float]]], ...]:
+    ) -> tuple[list[DiGraph], ...]:
         """Predicts a subgraph of the GO based on the input sequence tokens."""
 
         aspects = self.predict_all_terms(x, top_p)
@@ -426,9 +420,9 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
         results = []
 
         for terms in aspects:
-            subgraphs, terms = self._build_subgraphs(terms)
+            subgraphs = self._build_subgraphs(terms)
 
-            results.append((subgraphs, terms))
+            results.append(subgraphs)
 
         return tuple(results)
 
@@ -454,21 +448,19 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
         return terms
 
-    def _build_subgraphs(
-        self, terms: list[dict[str, float]]
-    ) -> tuple[list[DiGraph], list[dict[str, float]]]:
+    def _build_subgraphs(self, terms: list[dict[str, float]]) -> list[DiGraph]:
         """
         Builds subgraphs of the GO DAG based on the predicted probabilities.
         """
 
         assert self.graph is not None, "Gene Ontology graph is not loaded."
 
-        subgraphs, probabilities = [], []
+        subgraphs = []
 
         for sample_terms in terms:
             term_probabilities = defaultdict(float, sample_terms)
 
-            # Fix up the predictions by leveraging the GO DAG hierarchy.
+            # Fix up the probabilities by leveraging the DAG hierarchy.
             for go_id, child_probability in sample_terms.items():
                 for descendant in descendants(self.graph, go_id):
                     parent_probability = term_probabilities[descendant]
@@ -482,10 +474,12 @@ class ESMCProteinFunction(Module, PyTorchModelHubMixin):
 
             subgraph = self.graph.subgraph(term_probabilities.keys())
 
-            subgraphs.append(subgraph)
-            probabilities.append(term_probabilities)
+            for go_term in subgraph.nodes():
+                subgraph.nodes[go_term]["probability"] = term_probabilities[go_term]
 
-        return subgraphs, probabilities
+            subgraphs.append(subgraph)
+
+        return subgraphs
 
 
 class GOTermClassifier(Module):

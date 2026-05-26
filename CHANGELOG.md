@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.0.4
+
+- Fix API leaking term probabilities.
+
 ## 1.0.3
 
 - Fix index to GO term remapping

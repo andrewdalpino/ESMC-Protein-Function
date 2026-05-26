@@ -18,14 +18,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def _get_dag_layers(subgraph):
+def build_aspect_figure(subgraph, title):
     generations = list(nx.topological_generations(subgraph))
 
-    return {i: list(gen) for i, gen in enumerate(generations)}
-
-
-def build_aspect_figure(subgraph, probabilities, title):
-    layers = _get_dag_layers(subgraph)
+    layers = {i: list(gen) for i, gen in enumerate(generations)}
 
     pos = nx.multipartite_layout(subgraph, subset_key=layers)
 
@@ -67,7 +63,7 @@ def build_aspect_figure(subgraph, probabilities, title):
 
         node_text.append(name)
 
-        prob = probabilities.get(go_term, 0.0)
+        prob = subgraph.nodes[go_term].get("probability", 0.0)
 
         node_color.append(prob)
 
@@ -110,14 +106,13 @@ def build_aspect_figure(subgraph, probabilities, title):
     return fig
 
 
-def build_combined_figure(aspect_results, titles):
+def build_combined_figure(aspect_subgraphs, titles):
     figs = []
 
-    for (subgraphs, probabilities), title in zip(aspect_results, titles):
+    for subgraphs, title in zip(aspect_subgraphs, titles):
         subgraph = subgraphs[0]
-        probabilities = probabilities[0]
 
-        fig = build_aspect_figure(subgraph, probabilities, title)
+        fig = build_aspect_figure(subgraph, title)
 
         figs.append(fig)
 
@@ -227,9 +222,9 @@ def main():
 
         input_ids = input_ids.unsqueeze(0)
 
-        aspect_results = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
+        aspect_subgraphs = model.predict_all_subgraphs(input_ids, top_p=args.top_p)
 
-        fig = build_combined_figure(aspect_results, titles)
+        fig = build_combined_figure(aspect_subgraphs, titles)
 
         fig.show(config={"responsive": False})
 
